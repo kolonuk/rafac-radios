@@ -33,46 +33,69 @@
     </header>
 
     <main class="tutor-layout">
-        <section class="student-list-container">
-            <div class="section-header">
-                <h2>Students</h2>
-                <div id="pending-requests" class="pending-requests" style="display:none;">
-                    <h3>Pending Callsigns</h3>
-                    <ul id="pending-list"></ul>
+        <section class="tutor-pane">
+            <h2>Live Transcript</h2>
+            <div class="tutor-pane-content">
+                <div id="transcript-list" class="transcript-list">
+                    <!-- Transcripts will appear here -->
                 </div>
             </div>
-            <ul id="student-list">
-                <!-- Students will appear here -->
-            </ul>
         </section>
 
-        <section class="freq-call-container">
-            <div class="frequency-list-container">
-                <h2>Frequencies</h2>
+        <section class="tutor-pane">
+            <h2>Participants</h2>
+            <div class="tutor-pane-content">
+                <div class="section-header">
+                    <h3>Tutors</h3>
+                </div>
+                <ul id="tutor-list">
+                    <!-- Tutors will appear here -->
+                </ul>
+                <div class="divider"></div>
+                <div class="section-header">
+                    <h3>Students</h3>
+                    <div id="pending-requests" class="pending-requests" style="display:none;">
+                        <h4>Pending Callsigns</h4>
+                        <ul id="pending-list"></ul>
+                    </div>
+                </div>
+                <ul id="student-list">
+                    <!-- Students will appear here -->
+                </ul>
+            </div>
+        </section>
+
+        <section class="tutor-pane">
+            <h2>Frequencies & Callsigns</h2>
+            <div class="tutor-pane-content">
+                <h3>Frequencies</h3>
                 <div id="frequency-list" class="frequency-grid">
                     <!-- Frequencies will appear here -->
                 </div>
-            </div>
-            <div class="callsign-list-container">
-                <h2>Callsigns</h2>
+                <div class="divider"></div>
+                <h3>Callsigns</h3>
                 <div id="callsign-list" class="callsign-grid">
                     <!-- Callsigns will appear here -->
                 </div>
             </div>
         </section>
 
-        <section class="actions-container">
+        <section class="tutor-pane">
             <h2>Actions</h2>
-            <button id="create-freq-btn">Create Frequency</button>
-            <button id="create-callsign-btn">Create Callsign</button>
-            <div class="divider"></div>
-            <button id="clean-students-btn" class="warning">Clean Student List</button>
-            <button id="clean-freqs-btn" class="warning">Clean Frequencies</button>
-            <button id="clean-callsigns-btn" class="warning">Clean Callsigns</button>
-            <button id="clear-freqs-btn" class="warning">Clear Student Frequencies</button>
-            <div class="divider"></div>
-            <button id="end-ex-btn" class="danger">END EX</button>
-            <button id="end-lesson-btn" class="danger">End Lesson</button>
+            <div class="tutor-pane-content">
+                <button id="global-ptt-btn" class="ptt-btn">Global PTT</button>
+                <div class="divider"></div>
+                <button id="create-freq-btn">Create Frequency</button>
+                <button id="create-callsign-btn">Create Callsign</button>
+                <div class="divider"></div>
+                <button id="clean-students-btn" class="warning mini-btn">Clean Students</button>
+                <button id="clean-freqs-btn" class="warning mini-btn">Clean Frequencies</button>
+                <button id="clean-callsigns-btn" class="warning mini-btn">Clean Callsigns</button>
+                <button id="clear-freqs-btn" class="warning mini-btn">Clear All Frequencies</button>
+                <div class="divider"></div>
+                <button id="end-ex-btn" class="danger">END EX</button>
+                <button id="end-lesson-btn" class="danger">End Lesson</button>
+            </div>
         </section>
     </main>
 
@@ -100,7 +123,7 @@
 
     <script src="/static/app.js"></script>
     <script>
-        initTutor("{{.LessonID}}", "{{.SystemCode}}");
+        initTutor("{{.LessonID}}", "{{.UserID}}", "{{.TutorName}}");
     </script>
 </body>
 </html>

@@ -14,7 +14,7 @@
         <div class="forms-container">
             <div class="form-box">
                 <h2>Student Join</h2>
-                <form action="/student" method="get">
+                <form id="student-form" action="/student" method="get">
                     <label for="name">Your Name:</label>
                     <input type="text" id="name" name="name" required>
                     <label for="lessonID_student">Lesson ID:</label>
@@ -44,6 +44,18 @@
         if (error) {
             document.getElementById('error-message').textContent = error;
         }
+
+        document.getElementById('student-form').onsubmit = async (e) => {
+            e.preventDefault();
+            const name = document.getElementById('name').value;
+            const lessonID = document.getElementById('lessonID_student').value;
+            const resp = await fetch(`/check_name?lesson_id=${encodeURIComponent(lessonID)}&name=${encodeURIComponent(name)}`);
+            if (resp.status === 409) {
+                document.getElementById('error-message').textContent = "That name is already taken in this lesson.";
+            } else {
+                e.target.submit();
+            }
+        };
     </script>
 </body>
 </html>

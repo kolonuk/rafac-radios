@@ -12,6 +12,28 @@
         <p><a href="/" class="button">Back to Home</a></p>
 
         <div class="admin-layout" style="display: grid; grid-template-columns: 1fr 1fr; gap: 2rem;">
+        <section class="admin-section">
+            <h2>Lesson Log Downloads</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>File Name</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{range .Zips}}
+                    <tr>
+                        <td>{{.}}</td>
+                        <td><a href="/admin/download?file={{.}}" class="button mini-btn">Download</a></td>
+                    </tr>
+                    {{else}}
+                    <tr><td colspan="2">No logs found.</td></tr>
+                    {{end}}
+                </tbody>
+            </table>
+        </section>
+
             <section class="admin-section">
                 <h2>Active Lessons</h2>
                 <table style="width: 100%; border-collapse: collapse; margin-top: 1rem;">

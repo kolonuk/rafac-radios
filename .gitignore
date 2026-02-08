@@ -1,2 +1,4 @@
-main
-output.log
+logs/
+app.log
+*.wav
+*.zip

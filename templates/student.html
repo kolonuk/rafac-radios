@@ -7,43 +7,51 @@
     <link rel="stylesheet" href="/static/style.css">
 </head>
 <body id="student-body">
-    <div class="student-container">
-        <h1>Welcome, <span id="student-name">{{.Name}}</span></h1>
-        <p>Lesson ID: <strong>{{.LessonID}}</strong> | Tutor: <strong id="tutor-name-display">{{.TutorName}}</strong></p>
+    <div class="student-mobile-layout">
+        <header class="student-header">
+            <div>
+                <h1>Radio: {{.Name}}</h1>
+                <p>Lesson: <strong>{{.LessonID}}</strong> | Tutor: <strong id="tutor-name-display">{{.TutorName}}</strong></p>
+            </div>
+            <div class="header-actions">
+                <button id="request-permissions-student" class="mini-btn">Allow Mic</button>
+                <span id="permission-status-student"></span>
+                <a href="/" class="button danger mini-btn">Leave</a>
+            </div>
+        </header>
 
-        <div class="callsign-display">
-            Your Callsign: <span id="current-callsign">None</span>
-            <button id="change-call-btn" class="mini-btn" style="display:none;">Change</button>
+        <div class="student-tabs">
+            <button id="tab-ptt" class="tab-btn active" onclick="showTab('ptt-tab')">Radio</button>
+            <button id="tab-info" class="tab-btn" onclick="showTab('info-tab')">Info & Others</button>
         </div>
 
-        <div class="frequency-display">
-            Current Frequency: <span id="current-frequency">None</span>
-            <button id="change-freq-btn" class="mini-btn" style="display:none;">Change</button>
-        </div>
+        <main class="student-main">
+            <div id="ptt-tab" class="tab-content active">
+                <div class="status-bar">
+                    <div class="status-item">Freq: <strong id="current-frequency">None</strong> <button id="change-freq-btn" class="mini-btn" style="display:none;">Edit</button></div>
+                    <div class="status-item">Call: <strong id="current-callsign">None</strong> <button id="change-call-btn" class="mini-btn" style="display:none;">Edit</button></div>
+                </div>
 
-        <div class="others-list">
-            <strong>Frequencies:</strong>
-            <ul id="freq-status-list">
-                <!-- Frequencies with status colors -->
-            </ul>
-            <br>
-            <strong>Others on your frequency:</strong>
-            <ul id="others-on-freq">
-                <!-- Others will appear here -->
-            </ul>
-        </div>
+                <div class="ptt-zone">
+                    <button id="ptt-button">PUSH TO TALK (PTT)</button>
+                    <p class="hint">Hold Space or Tap & Hold</p>
+                </div>
 
-        <div class="ptt-container">
-            <button id="ptt-button">PUSH TO TALK (PTT)</button>
-            <p class="hint">Push and hold the button or Space bar</p>
-        </div>
+                <div class="freq-monitor">
+                    <h3>Frequency Activity</h3>
+                    <ul id="freq-status-list" class="frequency-grid" style="list-style: none; padding: 0;"></ul>
+                </div>
+            </div>
 
-        <div class="permissions">
-            <button id="request-permissions-student">Allow Mic/Speaker</button>
-            <span id="permission-status-student"></span>
-        </div>
-
-        <a href="/" class="button leave-btn">Leave</a>
+            <div id="info-tab" class="tab-content">
+                <div class="others-list">
+                    <h3>Others on your frequency:</h3>
+                    <ul id="others-on-freq"></ul>
+                </div>
+                <div class="divider"></div>
+                <p>Welcome to the virtual radio lesson. Please wait for your tutor to assign you a frequency and callsign if they haven't already.</p>
+            </div>
+        </main>
     </div>
 
     <dialog id="student-freq-dialog">

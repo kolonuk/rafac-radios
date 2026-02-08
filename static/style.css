@@ -106,11 +106,41 @@ button.danger {
 
 /* Tutor Layout */
 .tutor-layout {
-    display: grid;
-    grid-template-columns: 1fr 1fr 1fr;
+    display: flex;
     gap: 1rem;
     padding: 1rem;
-    height: calc(100vh - 100px);
+    height: calc(100vh - 120px);
+    overflow: hidden;
+}
+
+@media (max-width: 1024px) {
+    .tutor-layout {
+        flex-direction: column;
+        height: auto;
+        overflow-y: auto;
+    }
+}
+
+.tutor-pane {
+    flex: 1;
+    min-width: 250px;
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--border-color);
+    background: var(--card-bg);
+    border-radius: 8px;
+    overflow: hidden;
+    /* Resizable logic on desktop */
+}
+
+@media (min-width: 1025px) {
+    .tutor-pane {
+        resize: horizontal;
+        overflow: auto;
+    }
+    .tutor-pane:last-child {
+        resize: none;
+    }
 }
 
 .freq-call-container {
@@ -120,12 +150,39 @@ button.danger {
     height: 100%;
 }
 
-.student-list-container, .frequency-list-container, .callsign-list-container, .actions-container {
-    border: 1px solid var(--border-color);
+.tutor-pane-content {
     padding: 1rem;
-    background: var(--card-bg);
-    border-radius: 8px;
     overflow-y: auto;
+    flex: 1;
+}
+
+.tutor-pane h2 {
+    margin: 0;
+    padding: 0.75rem 1rem;
+    background: rgba(0,0,0,0.05);
+    border-bottom: 1px solid var(--border-color);
+    font-size: 1.1rem;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+
+.transcript-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.transcript-item {
+    padding: 0.5rem;
+    border-bottom: 1px solid var(--border-color);
+    font-size: 0.9rem;
+}
+
+.transcript-meta {
+    color: var(--secondary-color);
+    display: block;
+    margin-bottom: 0.2rem;
 }
 
 .frequency-list-container, .callsign-list-container {
@@ -211,9 +268,19 @@ header {
     margin-left: 0.5rem;
 }
 
-.student-actions {
+.student-actions, .tutor-actions {
     display: flex;
     gap: 0.3rem;
+}
+
+.tutor-item {
+    padding: 0.5rem;
+    margin-bottom: 0.5rem;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
 }
 
 .remove-btn {
@@ -265,20 +332,92 @@ header {
     font-weight: bold;
 }
 
+.missing-permissions {
+    color: var(--error-color);
+    text-decoration: underline dotted;
+}
+
 .student-item.receiving-active {
     border-color: var(--success-color);
     box-shadow: 0 0 5px var(--success-color);
 }
 
 /* Student Layout */
-.student-container {
-    max-width: 500px;
-    margin: 5rem auto;
-    text-align: center;
+.student-mobile-layout {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    max-width: 600px;
+    margin: 0 auto;
     background: var(--card-bg);
-    padding: 2rem;
-    border-radius: 12px;
-    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+}
+
+.student-header {
+    padding: 1rem;
+    border-bottom: 1px solid var(--border-color);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.student-tabs {
+    display: flex;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.tab-btn {
+    flex: 1;
+    padding: 1rem;
+    border: none;
+    background: none;
+    color: var(--text-color);
+    cursor: pointer;
+    font-weight: bold;
+    opacity: 0.6;
+}
+
+.tab-btn.active {
+    opacity: 1;
+    border-bottom: 3px solid var(--primary-color);
+}
+
+.student-main {
+    flex: 1;
+    overflow-y: auto;
+    position: relative;
+}
+
+.tab-content {
+    display: none;
+    padding: 1rem;
+    height: 100%;
+}
+
+.tab-content.active {
+    display: flex;
+    flex-direction: column;
+}
+
+.status-bar {
+    display: flex;
+    justify-content: space-around;
+    padding: 0.5rem;
+    background: rgba(0,0,0,0.05);
+    border-radius: 4px;
+    margin-bottom: 1rem;
+}
+
+.ptt-zone {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    min-height: 250px;
+}
+
+.freq-monitor {
+    margin-top: 1rem;
 }
 
 .frequency-display, .callsign-display {
@@ -307,6 +446,14 @@ header {
 
 .ptt-container {
     margin: 2rem 0;
+}
+
+.ptt-btn {
+    background-color: var(--secondary-color);
+}
+
+.ptt-btn.active {
+    background-color: var(--error-color) !important;
 }
 
 #ptt-button {

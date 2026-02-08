@@ -6,10 +6,14 @@ let isTutor = false;
 let frequencies = [];
 let callsigns = [];
 let students = [];
+let tutors = [];
 let lessonType = 'fixed';
 let tutorName = '';
 let callsignVerify = false;
 let pendingCallsigns = [];
+let hasPermissions = false;
+let recognition;
+let currentTranscript = "";
 
 // Audio variables
 let audioCtx;
@@ -27,21 +31,26 @@ function initWS() {
         const joinMsg = {
             type: "join",
             lesson_id: currentLessonID,
+            user_id: currentStudentID, // Using currentStudentID as the generic user_id
+            name: currentName
         };
-        if (!isTutor) {
-            joinMsg.student_id = currentStudentID;
-            joinMsg.name = currentName;
-        }
         ws.send(JSON.stringify(joinMsg));
+
+        if (!isTutor && hasPermissions) {
+            ws.send(JSON.stringify({ type: "update_permissions", has_permissions: true }));
+        }
     };
 
     ws.onmessage = async (event) => {
         if (typeof event.data === "string") {
             const msg = JSON.parse(event.data);
-            if (msg.type === "update") {
+            if (msg.type === "transcript") {
+                addTranscript(msg);
+            } else if (msg.type === "update") {
                 frequencies = msg.frequencies || [];
                 callsigns = msg.callsigns || [];
                 students = msg.students || [];
+                tutors = msg.tutors || [];
                 lessonType = msg.lesson_type;
                 tutorName = msg.tutor_name;
                 callsignVerify = msg.callsign_verify;
@@ -51,6 +60,18 @@ function initWS() {
                 window.location.href = "/?error=Session ended by tutor";
             } else if (msg.type === "error") {
                 window.location.href = "/?error=" + encodeURIComponent(msg.message);
+            } else if (msg.type === "role_change") {
+                if (msg.new_role === "tutor") {
+                    window.location.reload(); // Reload to get tutor UI
+                } else if (msg.new_role === "student") {
+                    window.location.reload(); // Reload to get student UI
+                }
+            } else if (msg.type === "tts_broadcast") {
+                speak(msg.message);
+            } else if (msg.type === "force_permission_request") {
+                requestPermissions();
+            } else if (msg.type === "download_zip") {
+                window.location.href = msg.url;
             }
         } else {
             // Binary audio data
@@ -136,10 +157,46 @@ function playAudio(arrayBuffer) {
     }
 }
 
-function initTutor(lessonID, tutorID) {
+let tutorPTTTarget = null;
+
+function speak(text) {
+    if ('speechSynthesis' in window) {
+        const utterance = new SpeechSynthesisUtterance(text);
+        window.speechSynthesis.speak(utterance);
+    }
+}
+
+function startTutorPTT(target) {
+    const btn = target === 'GLOBAL' ? document.getElementById('global-ptt-btn') : null;
+    if (btn) btn.classList.add('active');
+    tutorPTTTarget = target;
+    ws.send(JSON.stringify({ type: "tutor_ptt", is_ptting: true, target: target, name: tutorName }));
+    startRecording();
+}
+
+function stopTutorPTT() {
+    const btn = document.getElementById('global-ptt-btn');
+    if (btn) btn.classList.remove('active');
+    ws.send(JSON.stringify({ type: "tutor_ptt", is_ptting: false, name: tutorName }));
+    tutorPTTTarget = null;
+    stopRecording();
+}
+
+function initTutor(lessonID, tutorID, name) {
     isTutor = true;
     currentLessonID = lessonID;
+    currentStudentID = tutorID;
+    currentName = name;
+    tutorName = name;
     initWS();
+
+    const globalPtt = document.getElementById('global-ptt-btn');
+    if (globalPtt) {
+        globalPtt.onmousedown = () => startTutorPTT('GLOBAL');
+        globalPtt.onmouseup = stopTutorPTT;
+        globalPtt.ontouchstart = (e) => { e.preventDefault(); startTutorPTT('GLOBAL'); };
+        globalPtt.ontouchend = (e) => { e.preventDefault(); stopTutorPTT(); };
+    }
 
     document.getElementById('create-freq-btn').onclick = () => {
         document.getElementById('freq-dialog').showModal();
@@ -198,7 +255,10 @@ function initTutor(lessonID, tutorID) {
     document.getElementById('end-lesson-btn').onclick = () => {
         if (confirm("End the entire lesson? This will kick all students and close the session.")) {
             ws.send(JSON.stringify({ type: "end_lesson" }));
-            window.location.href = "/";
+            // We'll wait for the download_zip message or a timeout before redirecting
+            setTimeout(() => {
+                window.location.href = "/";
+            }, 2000);
         }
     };
 
@@ -224,6 +284,7 @@ function initTutor(lessonID, tutorID) {
 
     document.getElementById('request-permissions').onclick = requestPermissions;
     requestPermissions();
+    initSpeechRecognition();
 }
 
 function initStudent(lessonID, name) {
@@ -304,6 +365,7 @@ function initStudent(lessonID, name) {
 
     document.getElementById('request-permissions-student').onclick = requestPermissions;
     requestPermissions();
+    initSpeechRecognition();
 }
 
 function showStudentFreqDialog() {
@@ -333,10 +395,15 @@ async function requestPermissions() {
         if (!audioCtx) {
             audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         }
+        hasPermissions = true;
         const status = isTutor ? document.getElementById('permission-status') : document.getElementById('permission-status-student');
         if (status) status.textContent = "✅ Permissions granted";
         const btn = isTutor ? document.getElementById('request-permissions') : document.getElementById('request-permissions-student');
         if (btn) btn.style.display = 'none';
+
+        if (!isTutor && ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: "update_permissions", has_permissions: true }));
+        }
     } catch (err) {
         console.error("Permission denied", err);
         const status = isTutor ? document.getElementById('permission-status') : document.getElementById('permission-status-student');
@@ -344,11 +411,48 @@ async function requestPermissions() {
     }
 }
 
+function initSpeechRecognition() {
+    if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+        console.warn("Speech recognition not supported");
+        return;
+    }
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    recognition = new SpeechRecognition();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = 'en-GB';
+
+    recognition.onresult = (event) => {
+        let interimTranscript = '';
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+            if (event.results[i].isFinal) {
+                currentTranscript += event.results[i][0].transcript;
+            } else {
+                interimTranscript += event.results[i][0].transcript;
+            }
+        }
+        // Send interim/final transcript to server
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({
+                type: "transcript",
+                text: currentTranscript + interimTranscript
+            }));
+        }
+    };
+}
+
 function startRecording() {
     if (!audioCtx || !microphoneStream) return;
 
     if (audioCtx.state === 'suspended') {
         audioCtx.resume();
+    }
+
+    currentTranscript = "";
+    if (recognition) {
+        try {
+            recognition.start();
+        } catch (e) { console.error("Recognition start error", e); }
     }
 
     sourceNode = audioCtx.createMediaStreamSource(microphoneStream);
@@ -369,8 +473,18 @@ function startRecording() {
     processorNode.onaudioprocess = (e) => {
         if (ws && ws.readyState === WebSocket.OPEN) {
             const inputData = e.inputBuffer.getChannelData(0);
-            // Send as Float32Array binary data
-            ws.send(inputData.buffer);
+            if (isTutor && tutorPTTTarget) {
+                // Prepend "TUTOR|Target|" to binary data
+                const header = `TUTOR|${tutorPTTTarget}|`;
+                const headerBytes = new TextEncoder().encode(header);
+                const combined = new Uint8Array(headerBytes.length + inputData.buffer.byteLength);
+                combined.set(headerBytes);
+                combined.set(new Uint8Array(inputData.buffer), headerBytes.length);
+                ws.send(combined.buffer);
+            } else {
+                // Send as Float32Array binary data
+                ws.send(inputData.buffer);
+            }
         }
     };
 
@@ -394,6 +508,11 @@ function stopRecording() {
         sourceNode.disconnect();
         sourceNode = null;
     }
+    if (recognition) {
+        try {
+            recognition.stop();
+        } catch (e) { console.error("Recognition stop error", e); }
+    }
 }
 
 function updateUI() {
@@ -408,6 +527,21 @@ function updateTutorUI() {
     // Update settings UI if they changed from elsewhere
     document.getElementById('lesson-type').value = lessonType;
     document.getElementById('callsign-verify').checked = callsignVerify;
+
+    // Update Tutor list
+    const tutorList = document.getElementById('tutor-list');
+    tutorList.innerHTML = '';
+    tutors.forEach(t => {
+        const li = document.createElement('li');
+        li.className = 'tutor-item';
+        li.innerHTML = `
+            <span>${t.name} ${t.is_main ? '(Main)' : ''}</span>
+            <div class="tutor-actions">
+                ${!t.is_main ? `<button class="mini-btn remove-btn" onclick="demoteTutor('${t.id}')">Demote</button>` : ''}
+            </div>
+        `;
+        tutorList.appendChild(li);
+    });
 
     // Update pending requests
     const pendingRequests = document.getElementById('pending-requests');
@@ -443,8 +577,10 @@ function updateTutorUI() {
         if (receiving) li.classList.add('receiving-active');
 
         li.innerHTML = `
-            <span>${s.name} ${s.callsign ? `[${s.callsign}]` : ''} ${s.frequency ? `(${s.frequency})` : ''}</span>
+            <span class="${!s.has_permissions ? 'missing-permissions' : ''}">${!s.has_permissions ? '⚠️' : ''} ${s.name} ${s.callsign ? `[${s.callsign}]` : ''} ${s.frequency ? `(${s.frequency})` : ''}</span>
             <div class="student-actions">
+                ${!s.has_permissions ? `<button class="mini-btn warning" onclick="forcePermissionRequest('${s.id}')" title="Force Permission Request">Req Mic</button>` : ''}
+                <button class="mini-btn" onclick="promoteStudent('${s.id}')">Promote</button>
                 ${s.frequency ? `<button class="remove-btn" onclick="removeFreq('${s.id}')">X Freq</button>` : ''}
                 ${s.callsign ? `<button class="remove-btn" onclick="removeCall('${s.id}')">X Call</button>` : ''}
                 <span>${s.is_ptting ? '🎙️' : ''} ${receiving ? '🔊' : ''}</span>
@@ -618,4 +754,44 @@ function approveCallsign(studentID, callsign) {
 
 function denyCallsign(studentID, callsign) {
     ws.send(JSON.stringify({ type: "deny_callsign", student_id: studentID, callsign: callsign }));
+}
+
+function promoteStudent(studentID) {
+    ws.send(JSON.stringify({ type: "role_change", target_id: studentID, new_role: "tutor" }));
+}
+
+function demoteTutor(tutorID) {
+    ws.send(JSON.stringify({ type: "role_change", target_id: tutorID, new_role: "student" }));
+}
+
+function forcePermissionRequest(studentID) {
+    ws.send(JSON.stringify({ type: "force_permission_request", target_id: studentID }));
+}
+
+function addTranscript(msg) {
+    const container = document.getElementById('transcript-list');
+    if (!container) return;
+
+    let div = document.getElementById(`transcript-${msg.user_id}`);
+    if (!div) {
+        div = document.createElement('div');
+        div.id = `transcript-${msg.user_id}`;
+        div.className = 'transcript-item';
+        container.prepend(div);
+    }
+
+    div.innerHTML = `
+        <span class="transcript-meta">[${msg.frequency}] <strong>${msg.callsign}</strong>:</span>
+        <span class="transcript-text">${msg.text}</span>
+    `;
+}
+
+function showTab(tabId) {
+    document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+
+    document.getElementById(tabId).classList.add('active');
+    // Find button that has onclick for this tabId
+    if (tabId === 'ptt-tab') document.getElementById('tab-ptt').classList.add('active');
+    if (tabId === 'info-tab') document.getElementById('tab-info').classList.add('active');
 }

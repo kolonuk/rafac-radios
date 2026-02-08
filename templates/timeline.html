@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lesson Timeline Review</title>
+    <style>
+        body { font-family: sans-serif; margin: 0; padding: 20px; background: #f4f4f4; }
+        .container { max-width: 1000px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        h1 { text-align: center; }
+        .filters { display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; }
+        .filter-group { border: 1px solid #ddd; padding: 10px; border-radius: 4px; }
+        .timeline { border-left: 2px solid #007bff; margin-left: 20px; padding-left: 20px; }
+        .entry { position: relative; margin-bottom: 20px; padding: 10px; border: 1px solid #eee; border-radius: 4px; }
+        .entry::before { content: ''; position: absolute; left: -31px; top: 15px; width: 20px; height: 2px; background: #007bff; }
+        .timestamp { font-size: 0.8rem; color: #666; }
+        .meta { font-weight: bold; margin: 5px 0; }
+        .details { font-style: italic; color: #444; }
+        .transcript { background: #e9ecef; padding: 10px; border-radius: 4px; margin-top: 10px; }
+        audio { width: 100%; margin-top: 10px; }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Lesson Timeline Review</h1>
+        <div class="filters">
+            <div class="filter-group">
+                <label>Filter by Frequency:</label>
+                <select id="freq-filter" onchange="applyFilters()">
+                    <option value="">All</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label>Filter by Callsign:</label>
+                <select id="callsign-filter" onchange="applyFilters()">
+                    <option value="">All</option>
+                </select>
+            </div>
+        </div>
+
+        <div id="timeline" class="timeline"></div>
+    </div>
+
+    <script>
+        /*DATA_PLACEHOLDER*/
+
+        function init() {
+            const freqs = new Set();
+            const callsigns = new Set();
+
+            logData.forEach(entry => {
+                if (entry.frequency) freqs.add(entry.frequency);
+                if (entry.callsign) callsigns.add(entry.callsign);
+            });
+
+            const freqSelect = document.getElementById('freq-filter');
+            freqs.forEach(f => {
+                const opt = document.createElement('option');
+                opt.value = f;
+                opt.textContent = f;
+                freqSelect.appendChild(opt);
+            });
+
+            const callSelect = document.getElementById('callsign-filter');
+            callsigns.forEach(c => {
+                const opt = document.createElement('option');
+                opt.value = c;
+                opt.textContent = c;
+                callSelect.appendChild(opt);
+            });
+
+            renderTimeline(logData);
+        }
+
+        function renderTimeline(data) {
+            const container = document.getElementById('timeline');
+            container.innerHTML = '';
+            data.forEach(entry => {
+                const div = document.createElement('div');
+                div.className = 'entry';
+                div.dataset.freq = entry.frequency || '';
+                div.dataset.callsign = entry.callsign || '';
+
+                const timeStr = new Date(entry.timestamp).toLocaleTimeString();
+
+                let content = `
+                    <div class="timestamp">${timeStr}</div>
+                    <div class="meta">${entry.callsign ? `[${entry.callsign}] ` : ''}${entry.name}</div>
+                    <div class="details">${entry.details || (entry.type === 'transmission' ? 'Transmission' : '')}</div>
+                `;
+
+                if (entry.transcript) {
+                    content += `<div class="transcript">${entry.transcript}</div>`;
+                }
+
+                if (entry.audio_file) {
+                    content += `<audio controls src="${entry.audio_file}"></audio>`;
+                }
+
+                div.innerHTML = content;
+                container.appendChild(div);
+            });
+        }
+
+        function applyFilters() {
+            const freq = document.getElementById('freq-filter').value;
+            const call = document.getElementById('callsign-filter').value;
+
+            const entries = document.querySelectorAll('.entry');
+            entries.forEach(e => {
+                const matchesFreq = !freq || e.dataset.freq === freq;
+                const matchesCall = !call || e.dataset.callsign === call;
+
+                if (matchesFreq && matchesCall) {
+                    e.classList.remove('hidden');
+                } else {
+                    e.classList.add('hidden');
+                }
+            });
+        }
+
+        init();
+    </script>
+</body>
+</html>

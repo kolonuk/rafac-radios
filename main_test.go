@@ -91,8 +91,8 @@ func TestLessonLifecycle(t *testing.T) {
 	if !l1.IsActive {
 		t.Error("Expected lesson to be active")
 	}
-	if l1.TutorName != "Tutor Alice" {
-		t.Errorf("Expected TutorName Tutor Alice, got %s", l1.TutorName)
+	if l1.Tutors[l1.MainTutorID] != "Tutor Alice" {
+		t.Errorf("Expected TutorName Tutor Alice, got %s", l1.Tutors[l1.MainTutorID])
 	}
 
 	l2 := getLesson("L1")
