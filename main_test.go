@@ -4,29 +4,44 @@ import (
 	"testing"
 )
 
-func TestGetOrCreateLesson(t *testing.T) {
-	l1 := getOrCreateLesson("L1")
+func TestLessonLifecycle(t *testing.T) {
+	// Initially should be nil
+	l := getLesson("L1")
+	if l != nil {
+		t.Fatal("Expected lesson L1 to be nil initially")
+	}
+
+	// Tutor creates lesson
+	l1 := createLesson("L1", "admin")
 	if l1 == nil {
 		t.Fatal("Expected lesson L1 to be created")
 	}
-	if l1.ID != "L1" {
-		t.Errorf("Expected lesson ID L1, got %s", l1.ID)
+	if !l1.IsActive {
+		t.Error("Expected lesson to be active")
 	}
 
-	l2 := getOrCreateLesson("L1")
+	// Now getLesson should work
+	l2 := getLesson("L1")
 	if l1 != l2 {
-		t.Error("Expected same lesson instance for same ID")
+		t.Error("Expected same lesson instance")
+	}
+
+	// End lesson
+	l1.IsActive = false
+	l3 := getLesson("L1")
+	if l3 != nil {
+		t.Error("Expected lesson to be nil after being deactivated")
 	}
 }
 
 func TestLessonStudentsAndCallsigns(t *testing.T) {
-	l := getOrCreateLesson("L2")
+	l := createLesson("L2", "admin")
 	l.mu.Lock()
 	l.Students["s1"] = &Student{ID: "s1", Name: "Alice"}
 	l.Callsigns = append(l.Callsigns, "Alpha")
 	l.mu.Unlock()
 
-	l = getOrCreateLesson("L2")
+	l = getLesson("L2")
 	l.mu.Lock()
 	if len(l.Students) != 1 {
 		t.Errorf("Expected 1 student, got %d", len(l.Students))

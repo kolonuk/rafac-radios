@@ -44,6 +44,7 @@ type Lesson struct {
 	Callsigns          []string            `json:"callsigns"`
 	ActiveTransmitters map[string]string   `json:"active_transmitters"` // freq -> studentID
 	conns              map[*websocket.Conn]*ConnState
+	IsActive           bool                `json:"is_active"`
 	mu                 sync.Mutex
 }
 
@@ -52,21 +53,33 @@ var (
 	lessonsMu sync.Mutex
 )
 
-func getOrCreateLesson(id string) *Lesson {
+func getLesson(id string) *Lesson {
 	lessonsMu.Lock()
 	defer lessonsMu.Unlock()
-	if l, ok := lessons[id]; ok {
-		return l
+	l, ok := lessons[id]
+	if !ok || !l.IsActive {
+		return nil
 	}
-	l := &Lesson{
-		ID:                 id,
-		Students:           make(map[string]*Student),
-		Frequencies:        []string{},
-		Callsigns:          []string{},
-		ActiveTransmitters: make(map[string]string),
-		conns:              make(map[*websocket.Conn]*ConnState),
+	return l
+}
+
+func createLesson(id string, tutorID string) *Lesson {
+	lessonsMu.Lock()
+	defer lessonsMu.Unlock()
+	l, ok := lessons[id]
+	if !ok {
+		l = &Lesson{
+			ID:                 id,
+			Students:           make(map[string]*Student),
+			Frequencies:        []string{},
+			Callsigns:          []string{},
+			ActiveTransmitters: make(map[string]string),
+			conns:              make(map[*websocket.Conn]*ConnState),
+		}
+		lessons[id] = l
 	}
-	lessons[id] = l
+	l.TutorID = tutorID
+	l.IsActive = true
 	return l
 }
 
@@ -105,7 +118,7 @@ func tutorHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	getOrCreateLesson(lID)
+	createLesson(lID, tID)
 
 	tmpl := template.Must(template.ParseFiles("templates/tutor.html"))
 	tmpl.Execute(w, map[string]string{"LessonID": lID, "TutorID": tID})
@@ -117,6 +130,12 @@ func studentHandler(w http.ResponseWriter, r *http.Request) {
 
 	if name == "" || lID == "" {
 		http.Redirect(w, r, "/?error=Missing Name or Lesson ID", http.StatusFound)
+		return
+	}
+
+	l := getLesson(lID)
+	if l == nil {
+		http.Redirect(w, r, "/?error=Lesson not found or not active. Tutor must start the lesson first.", http.StatusFound)
 		return
 	}
 
@@ -147,6 +166,7 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 
 	var currentStudentID string
 	var currentLesson *Lesson
+	var isTutor bool
 
 	for {
 		msgType, msgData, err := conn.ReadMessage()
@@ -154,6 +174,10 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 			if currentLesson != nil {
 				currentLesson.mu.Lock()
 				delete(currentLesson.conns, conn)
+				if isTutor {
+					currentLesson.IsActive = false
+					forceLeaveAllStudents(currentLesson)
+				}
 				if currentStudentID != "" {
 					s, ok := currentLesson.Students[currentStudentID]
 					if ok && s.IsPTTing && s.Frequency != "" {
@@ -175,24 +199,11 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 				student, ok := currentLesson.Students[currentStudentID]
 				if ok && student.IsPTTing && student.Frequency != "" {
 					if currentLesson.ActiveTransmitters[student.Frequency] == currentStudentID {
-						// Prepend sender ID and frequency info to the binary message
-						// This helps the receiver filter audio
-						// For simplicity, let's just use a JSON-like header or fixed size header
-						// Actually, since we know the frequency of each connection, we can just route it.
-
 						for otherConn, state := range currentLesson.conns {
 							if otherConn == conn {
 								continue
 							}
 							if state.IsTutor {
-								// Tutors get all audio, but they need to know which student it is from
-								// Let's prepend the student ID (fixed 16 bytes?)
-								// Or just send another message.
-								// Let's just send raw audio for now and let tutor hear "everything" if listening.
-								// Requirement: "tutor listen in to the frequency... or student"
-								// So tutor needs to know which student/freq the audio is from.
-
-								// We'll prepend StudentID followed by Frequency name, null-terminated.
 								header := fmt.Sprintf("%s|%s|", student.ID, student.Frequency)
 								headerBytes := []byte(header)
 								fullMsg := append(headerBytes, msgData...)
@@ -200,7 +211,6 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 							} else {
 								otherStudent := currentLesson.Students[state.StudentID]
 								if otherStudent != nil && otherStudent.Frequency == student.Frequency {
-									// Students only get raw audio from their own frequency
 									otherConn.WriteMessage(websocket.BinaryMessage, msgData)
 								}
 							}
@@ -219,7 +229,38 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 
 		switch msg.Type {
 		case "join":
-			l := getOrCreateLesson(msg.LessonID)
+			// For tutor, we should allow them to join and create if needed,
+			// but we already have tutorHandler creating it.
+			// Students MUST have an existing active lesson.
+			l := getLesson(msg.LessonID)
+			if msg.StudentID == "" { // Tutor
+				isTutor = true
+				// Even if lesson is not active, tutor can join to reactivate?
+				// tutorHandler already called createLesson which sets IsActive=true.
+				lessonsMu.Lock()
+				l = lessons[msg.LessonID] // Get lesson regardless of IsActive for tutor
+				if l == nil {
+					// This shouldn't happen if they went through tutorHandler
+					l = &Lesson{
+						ID:                 msg.LessonID,
+						Students:           make(map[string]*Student),
+						Frequencies:        []string{},
+						Callsigns:          []string{},
+						ActiveTransmitters: make(map[string]string),
+						conns:              make(map[*websocket.Conn]*ConnState),
+						IsActive:           true,
+					}
+					lessons[msg.LessonID] = l
+				} else {
+					l.IsActive = true
+				}
+				lessonsMu.Unlock()
+			}
+
+			if l == nil {
+				conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"error","message":"Lesson not found"}`))
+				return
+			}
 			currentLesson = l
 			l.mu.Lock()
 			state := &ConnState{IsTutor: msg.StudentID == ""}
@@ -236,7 +277,7 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 			broadcastUpdate(l)
 
 		case "add_frequency":
-			if currentLesson != nil {
+			if currentLesson != nil && isTutor {
 				currentLesson.mu.Lock()
 				currentLesson.Frequencies = append(currentLesson.Frequencies, msg.Frequency)
 				currentLesson.mu.Unlock()
@@ -244,7 +285,7 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 			}
 
 		case "assign_frequency":
-			if currentLesson != nil {
+			if currentLesson != nil && isTutor {
 				currentLesson.mu.Lock()
 				if s, ok := currentLesson.Students[msg.StudentID]; ok {
 					if s.IsPTTing && s.Frequency != "" && currentLesson.ActiveTransmitters[s.Frequency] == s.ID {
@@ -257,7 +298,7 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 			}
 
 		case "clear_frequencies":
-			if currentLesson != nil {
+			if currentLesson != nil && isTutor {
 				currentLesson.mu.Lock()
 				currentLesson.ActiveTransmitters = make(map[string]string)
 				for _, s := range currentLesson.Students {
@@ -268,7 +309,7 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 			}
 
 		case "add_callsign":
-			if currentLesson != nil {
+			if currentLesson != nil && isTutor {
 				currentLesson.mu.Lock()
 				currentLesson.Callsigns = append(currentLesson.Callsigns, msg.Callsign)
 				currentLesson.mu.Unlock()
@@ -276,7 +317,7 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 			}
 
 		case "assign_callsign":
-			if currentLesson != nil {
+			if currentLesson != nil && isTutor {
 				currentLesson.mu.Lock()
 				if s, ok := currentLesson.Students[msg.StudentID]; ok {
 					s.Callsign = msg.Callsign
@@ -308,6 +349,72 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 				currentLesson.mu.Unlock()
 				broadcastUpdate(currentLesson)
 			}
+
+		case "clean_students":
+			if currentLesson != nil && isTutor {
+				currentLesson.mu.Lock()
+				forceLeaveAllStudents(currentLesson)
+				currentLesson.Students = make(map[string]*Student)
+				currentLesson.ActiveTransmitters = make(map[string]string)
+				currentLesson.mu.Unlock()
+				broadcastUpdate(currentLesson)
+			}
+
+		case "clean_frequencies":
+			if currentLesson != nil && isTutor {
+				currentLesson.mu.Lock()
+				currentLesson.Frequencies = []string{}
+				currentLesson.ActiveTransmitters = make(map[string]string)
+				for _, s := range currentLesson.Students {
+					s.Frequency = ""
+				}
+				currentLesson.mu.Unlock()
+				broadcastUpdate(currentLesson)
+			}
+
+		case "clean_callsigns":
+			if currentLesson != nil && isTutor {
+				currentLesson.mu.Lock()
+				currentLesson.Callsigns = []string{}
+				for _, s := range currentLesson.Students {
+					s.Callsign = ""
+				}
+				currentLesson.mu.Unlock()
+				broadcastUpdate(currentLesson)
+			}
+
+		case "end_ex":
+			if currentLesson != nil && isTutor {
+				currentLesson.mu.Lock()
+				currentLesson.ActiveTransmitters = make(map[string]string)
+				for _, s := range currentLesson.Students {
+					s.Frequency = ""
+				}
+				currentLesson.mu.Unlock()
+				broadcastUpdate(currentLesson)
+			}
+
+		case "end_lesson":
+			if currentLesson != nil && isTutor {
+				currentLesson.mu.Lock()
+				currentLesson.IsActive = false
+				forceLeaveAllStudents(currentLesson)
+				// Also clear everything for this lesson?
+				// Or keep it but inactive? The prompt says "students can not log on until tutur creates a lesson id".
+				// Let's just keep it inactive.
+				currentLesson.mu.Unlock()
+				// Tutor will also redirect on their end after sending this message.
+			}
+		}
+	}
+}
+
+func forceLeaveAllStudents(l *Lesson) {
+	msg := map[string]string{"type": "force_leave"}
+	data, _ := json.Marshal(msg)
+	for conn, state := range l.conns {
+		if !state.IsTutor {
+			conn.WriteMessage(websocket.TextMessage, data)
 		}
 	}
 }

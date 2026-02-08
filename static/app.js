@@ -39,6 +39,10 @@ function initWS() {
                 callsigns = msg.callsigns || [];
                 students = msg.students || [];
                 updateUI();
+            } else if (msg.type === "force_leave") {
+                window.location.href = "/?error=Session ended by tutor";
+            } else if (msg.type === "error") {
+                window.location.href = "/?error=" + encodeURIComponent(msg.message);
             }
         } else {
             // Binary audio data
@@ -94,34 +98,34 @@ async function handleIncomingAudio(data) {
 }
 
 function playAudio(arrayBuffer) {
-    // Assuming 16-bit PCM at some sample rate.
-    // To keep it simple, we could use AudioContext.decodeAudioData if it's a known format,
-    // but for raw PCM we need to create a buffer.
-    // Let's assume the sender sends Float32Array for simplicity with Web Audio API.
-    const float32Data = new Float32Array(arrayBuffer);
-    const audioBuffer = audioCtx.createBuffer(1, float32Data.length, audioCtx.sampleRate);
-    audioBuffer.getChannelData(0).set(float32Data);
+    if (!audioCtx) return;
+    try {
+        const float32Data = new Float32Array(arrayBuffer);
+        const audioBuffer = audioCtx.createBuffer(1, float32Data.length, audioCtx.sampleRate);
+        audioBuffer.getChannelData(0).set(float32Data);
 
-    const source = audioCtx.createBufferSource();
-    source.buffer = audioBuffer;
+        const source = audioCtx.createBufferSource();
+        source.buffer = audioBuffer;
 
-    // Add filtering and normalization to playback too for "radio quality"
-    const filter = audioCtx.createBiquadFilter();
-    filter.type = "bandpass";
-    filter.frequency.value = 1500; // 1.5kHz center
-    filter.Q.value = 1.0;
+        const filter = audioCtx.createBiquadFilter();
+        filter.type = "bandpass";
+        filter.frequency.value = 1500;
+        filter.Q.value = 1.0;
 
-    const compressor = audioCtx.createDynamicsCompressor();
-    compressor.threshold.value = -30;
-    compressor.knee.value = 10;
-    compressor.ratio.value = 12;
-    compressor.attack.value = 0.003;
-    compressor.release.value = 0.25;
+        const compressor = audioCtx.createDynamicsCompressor();
+        compressor.threshold.value = -30;
+        compressor.knee.value = 10;
+        compressor.ratio.value = 12;
+        compressor.attack.value = 0.003;
+        compressor.release.value = 0.25;
 
-    source.connect(filter);
-    filter.connect(compressor);
-    compressor.connect(audioCtx.destination);
-    source.start();
+        source.connect(filter);
+        filter.connect(compressor);
+        compressor.connect(audioCtx.destination);
+        source.start();
+    } catch (e) {
+        console.error("Error playing audio", e);
+    }
 }
 
 function initTutor(lessonID, tutorID) {
@@ -157,8 +161,37 @@ function initTutor(lessonID, tutorID) {
         }
     };
 
+    document.getElementById('clean-students-btn').onclick = () => {
+        if (confirm("Are you sure you want to kick all students?")) {
+            ws.send(JSON.stringify({ type: "clean_students" }));
+        }
+    };
+
+    document.getElementById('clean-freqs-btn').onclick = () => {
+        if (confirm("Are you sure you want to delete all frequencies?")) {
+            ws.send(JSON.stringify({ type: "clean_frequencies" }));
+        }
+    };
+
+    document.getElementById('clean-callsigns-btn').onclick = () => {
+        if (confirm("Are you sure you want to delete all callsigns?")) {
+            ws.send(JSON.stringify({ type: "clean_callsigns" }));
+        }
+    };
+
     document.getElementById('clear-freqs-btn').onclick = () => {
         ws.send(JSON.stringify({ type: "clear_frequencies" }));
+    };
+
+    document.getElementById('end-ex-btn').onclick = () => {
+        ws.send(JSON.stringify({ type: "end_ex" }));
+    };
+
+    document.getElementById('end-lesson-btn').onclick = () => {
+        if (confirm("End the entire lesson? This will kick all students and close the session.")) {
+            ws.send(JSON.stringify({ type: "end_lesson" }));
+            window.location.href = "/";
+        }
     };
 
     document.getElementById('request-permissions').onclick = requestPermissions;
@@ -262,7 +295,12 @@ function startRecording() {
     sourceNode.connect(filter);
     filter.connect(compressor);
     compressor.connect(processorNode);
-    processorNode.connect(audioCtx.destination); // Required to keep it running
+
+    // Use a zero-gain node to keep the processor alive without feedback
+    const silentGain = audioCtx.createGain();
+    silentGain.gain.value = 0;
+    processorNode.connect(silentGain);
+    silentGain.connect(audioCtx.destination);
 }
 
 function stopRecording() {
@@ -306,12 +344,12 @@ function updateTutorUI() {
         };
 
         // Tap and hold to listen
-        const startListen = () => { listeningTo = { type: 'student', id: s.id }; updateTutorUI(); };
-        const stopListen = () => { listeningTo = { type: null, id: null }; updateTutorUI(); };
+        const startListen = (e) => {
+            listeningTo = { type: 'student', id: s.id };
+            e.currentTarget.classList.add('listening');
+        };
         li.onmousedown = startListen;
-        li.onmouseup = stopListen;
-        li.ontouchstart = (e) => { e.preventDefault(); startListen(); };
-        li.ontouchend = (e) => { e.preventDefault(); stopListen(); };
+        li.ontouchstart = (e) => { e.preventDefault(); startListen(e); };
 
         studentList.appendChild(li);
     });
@@ -323,7 +361,6 @@ function updateTutorUI() {
         div.className = 'frequency-item';
         if (listeningTo.type === 'frequency' && listeningTo.id === f) div.classList.add('listening');
 
-        // Check if anyone is transmitting on this frequency
         const isTransmitting = students.some(s => s.is_ptting && s.frequency === f);
         if (isTransmitting) div.classList.add('transmitting-freq');
 
@@ -338,12 +375,12 @@ function updateTutorUI() {
         };
 
         // Tap and hold to listen
-        const startListen = () => { listeningTo = { type: 'frequency', id: f }; updateTutorUI(); };
-        const stopListen = () => { listeningTo = { type: null, id: null }; updateTutorUI(); };
+        const startListen = (e) => {
+            listeningTo = { type: 'frequency', id: f };
+            e.currentTarget.classList.add('listening');
+        };
         div.onmousedown = startListen;
-        div.onmouseup = stopListen;
-        div.ontouchstart = (e) => { e.preventDefault(); startListen(); };
-        div.ontouchend = (e) => { e.preventDefault(); stopListen(); };
+        div.ontouchstart = (e) => { e.preventDefault(); startListen(e); };
 
         freqList.appendChild(div);
     });
@@ -400,3 +437,17 @@ function updateStudentUI() {
         }
     }
 }
+
+// Global release of listening state for tutors
+window.addEventListener('mouseup', () => {
+    if (isTutor && listeningTo.type) {
+        listeningTo = { type: null, id: null };
+        document.querySelectorAll('.listening').forEach(el => el.classList.remove('listening'));
+    }
+});
+window.addEventListener('touchend', () => {
+    if (isTutor && listeningTo.type) {
+        listeningTo = { type: null, id: null };
+        document.querySelectorAll('.listening').forEach(el => el.classList.remove('listening'));
+    }
+});
