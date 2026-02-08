@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      - SYSTEM_CODE=admin
+      - AUDIO_BACKEND=websocket # Options: websocket, mumble
+      - MUMBLE_ADDRESS=mumble:64738
+    depends_on:
+      - mumble
+
+  mumble:
+    # Mumble server (Murmur) version can be updated easily here
+    image: mumblevoip/mumble-server:latest
+    ports:
+      - "64738:64738/tcp"
+      - "64738:64738/udp"
+    # persistent storage for mumble config/database
+    volumes:
+      - mumble-data:/etc/mumble
+    restart: always
+
+volumes:
+  mumble-data:
