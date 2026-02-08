@@ -918,18 +918,27 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 							} else {
 								if s.IsPTTing && currentLesson.ActiveTransmitters[s.Frequency] == state.UserID {
 									delete(currentLesson.ActiveTransmitters, s.Frequency)
-									// Save recording
+									// Move slow operations (save/STT) to goroutine
 									audioData := currentLesson.ActiveRecordings[state.UserID]
-									audioFile := currentLesson.saveAudio(state.UserID, audioData)
-									serverTranscript := currentLesson.ProcessSTT(state.UserID, audioData)
 									clientTranscript := currentLesson.CurrentTranscripts[state.UserID]
+									sName := s.Name
+									sCallsign := s.Callsign
+									sFreq := s.Frequency
+									uID := state.UserID
 
-									finalTranscript := clientTranscript
-									if serverTranscript != "" {
-										finalTranscript = serverTranscript + " " + clientTranscript
-									}
+									go func(l *Lesson, userID, name, callsign, freq, cTranscript string, data []byte) {
+										audioFile := l.saveAudio(userID, data)
+										serverTranscript := l.ProcessSTT(userID, data)
 
-									currentLesson.logTransmission(state.UserID, s.Name, s.Callsign, s.Frequency, audioFile, finalTranscript)
+										finalTranscript := cTranscript
+										if serverTranscript != "" {
+											finalTranscript = serverTranscript + " " + cTranscript
+										}
+										l.mu.Lock()
+										l.logTransmission(userID, name, callsign, freq, audioFile, finalTranscript)
+										l.mu.Unlock()
+									}(currentLesson, uID, sName, sCallsign, sFreq, clientTranscript, audioData)
+
 									delete(currentLesson.ActiveRecordings, state.UserID)
 									delete(currentLesson.CurrentTranscripts, state.UserID)
 								}
@@ -956,18 +965,25 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 				if msg.IsPTTing {
 					// Start recording (binary will append)
 				} else {
-					// Stop and save
+					// Stop and save in goroutine
 					audioData := currentLesson.ActiveRecordings[state.UserID]
-					audioFile := currentLesson.saveAudio(state.UserID, audioData)
-					serverTranscript := currentLesson.ProcessSTT(state.UserID, audioData)
 					clientTranscript := currentLesson.CurrentTranscripts[state.UserID]
+					tName := msg.Name
+					uID := state.UserID
 
-					finalTranscript := clientTranscript
-					if serverTranscript != "" {
-						finalTranscript = serverTranscript + " " + clientTranscript
-					}
+					go func(l *Lesson, userID, name, cTranscript string, data []byte) {
+						audioFile := l.saveAudio(userID, data)
+						serverTranscript := l.ProcessSTT(userID, data)
 
-					currentLesson.logTransmission(state.UserID, msg.Name, "TUTOR", "GLOBAL", audioFile, finalTranscript)
+						finalTranscript := cTranscript
+						if serverTranscript != "" {
+							finalTranscript = serverTranscript + " " + cTranscript
+						}
+						l.mu.Lock()
+						l.logTransmission(userID, name, "TUTOR", "GLOBAL", audioFile, finalTranscript)
+						l.mu.Unlock()
+					}(currentLesson, uID, tName, clientTranscript, audioData)
+
 					delete(currentLesson.ActiveRecordings, state.UserID)
 					delete(currentLesson.CurrentTranscripts, state.UserID)
 				}
@@ -1014,19 +1030,28 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 				for _, s := range currentLesson.Students {
 					s.Frequency = ""
 				}
-				// Server-side TTS generation
-				audio, err := currentLesson.GenerateTTS("End of exercise. End of exercise. End of exercise.")
-				if err == nil {
-					for _, st := range currentLesson.conns {
-						if !st.IsTutor {
-							// Send as binary audio so it plays like a radio transmission
-							sendMessage(st, websocket.BinaryMessage, audio)
-						}
+
+				// Capture connections for broadcast
+				var students []*ConnState
+				for _, st := range currentLesson.conns {
+					if !st.IsTutor {
+						students = append(students, st)
 					}
-				} else {
-					log.Printf("TTS Error: %v", err)
 				}
 				currentLesson.mu.Unlock()
+
+				// Server-side TTS generation (outside lock)
+				go func(l *Lesson, targets []*ConnState) {
+					audio, err := l.GenerateTTS("End of exercise. End of exercise. End of exercise.")
+					if err == nil {
+						for _, st := range targets {
+							sendMessage(st, websocket.BinaryMessage, audio)
+						}
+					} else {
+						log.Printf("TTS Error: %v", err)
+					}
+				}(currentLesson, students)
+
 				broadcastUpdate(currentLesson)
 			}
 
