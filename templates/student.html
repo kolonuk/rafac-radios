@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Student View - {{.Name}}</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body id="student-body">
+    <div class="student-mobile-layout">
+        <header class="student-header">
+            <div>
+                <h1>Radio: {{.Name}}</h1>
+                <p>Lesson: <strong>{{.LessonID}}</strong> | Tutor: <strong id="tutor-name-display">{{.TutorName}}</strong></p>
+            </div>
+            <div class="header-actions">
+                <button id="request-permissions-student" class="mini-btn">Allow Mic</button>
+                <span id="permission-status-student"></span>
+                <a href="/" class="button danger mini-btn">Leave</a>
+            </div>
+        </header>
+
+        <div class="student-tabs">
+            <button id="tab-ptt" class="tab-btn active" onclick="showTab('ptt-tab')">Radio</button>
+            <button id="tab-info" class="tab-btn" onclick="showTab('info-tab')">Info & Others</button>
+        </div>
+
+        <main class="student-main">
+            <div id="ptt-tab" class="tab-content active">
+                <div class="status-bar">
+                    <div class="status-item">Freq: <strong id="current-frequency">None</strong> <button id="change-freq-btn" class="mini-btn" style="display:none;">Edit</button></div>
+                    <div class="status-item">Call: <strong id="current-callsign">None</strong> <button id="change-call-btn" class="mini-btn" style="display:none;">Edit</button></div>
+                </div>
+
+                <div class="ptt-zone">
+                    <button id="ptt-button">PUSH TO TALK (PTT)</button>
+                    <p class="hint">Hold Space or Tap & Hold</p>
+                </div>
+
+                <div class="freq-monitor">
+                    <h3>Frequency Activity</h3>
+                    <ul id="freq-status-list" class="frequency-grid" style="list-style: none; padding: 0;"></ul>
+                </div>
+            </div>
+
+            <div id="info-tab" class="tab-content">
+                <div class="others-list">
+                    <h3>Others on your frequency:</h3>
+                    <ul id="others-on-freq"></ul>
+                </div>
+                <div class="divider"></div>
+                <p>Welcome to the virtual radio lesson. Please wait for your tutor to assign you a frequency and callsign if they haven't already.</p>
+            </div>
+        </main>
+    </div>
+
+    <dialog id="student-freq-dialog">
+        <form method="dialog">
+            <h3>Join Frequency</h3>
+            <div id="freq-options" class="frequency-grid"></div>
+            <div id="open-freq-input" style="display:none; margin-top:1rem;">
+                <input type="text" id="custom-freq-name" placeholder="New frequency name">
+                <button id="create-custom-freq">Create & Join</button>
+            </div>
+            <div class="dialog-buttons">
+                <button value="cancel">Cancel</button>
+            </div>
+        </form>
+    </dialog>
+
+    <dialog id="student-callsign-dialog">
+        <form method="dialog">
+            <h3>Change Callsign</h3>
+            <input type="text" id="new-callsign-input" placeholder="Enter new callsign">
+            <div class="dialog-buttons">
+                <button value="cancel">Cancel</button>
+                <button id="confirm-call-change" value="default">Request Change</button>
+            </div>
+        </form>
+    </dialog>
+
+    <script src="/static/app.js"></script>
+    <script>
+        initStudent("{{.LessonID}}", "{{.Name}}");
+    </script>
+</body>
+</html>

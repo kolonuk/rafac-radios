@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Radio Teaching App</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Radio Teaching App</h1>
+        <div id="error-message" class="error"></div>
+
+        <div class="forms-container">
+            <div class="form-box">
+                <h2>Student Join</h2>
+                <form id="student-form" action="/student" method="get">
+                    <label for="name">Your Name:</label>
+                    <input type="text" id="name" name="name" required>
+                    <label for="lessonID_student">Lesson ID:</label>
+                    <input type="text" id="lessonID_student" name="lessonID" required>
+                    <button type="submit">Continue</button>
+                </form>
+            </div>
+
+            <div class="form-box">
+                <h2>Tutor Login</h2>
+                <form action="/tutor" method="get">
+                    <label for="systemCode">System Code:</label>
+                    <input type="password" id="systemCode" name="systemCode" required>
+                    <label for="tutorName">Tutor Name:</label>
+                    <input type="text" id="tutorName" name="tutorName" required>
+                    <label for="lessonID_tutor">Lesson ID:</label>
+                    <input type="text" id="lessonID_tutor" name="lessonID" required>
+                    <button type="submit">Continue</button>
+                </form>
+                <p style="margin-top: 1rem;"><a href="/admin">Admin Portal</a></p>
+            </div>
+        </div>
+    </div>
+    <script>
+        const urlParams = new URLSearchParams(window.location.search);
+        const error = urlParams.get('error');
+        if (error) {
+            document.getElementById('error-message').textContent = error;
+        }
+
+        document.getElementById('student-form').onsubmit = async (e) => {
+            e.preventDefault();
+            const name = document.getElementById('name').value;
+            const lessonID = document.getElementById('lessonID_student').value;
+            const resp = await fetch(`/check_name?lesson_id=${encodeURIComponent(lessonID)}&name=${encodeURIComponent(name)}`);
+            if (resp.status === 409) {
+                document.getElementById('error-message').textContent = "That name is already taken in this lesson.";
+            } else {
+                e.target.submit();
+            }
+        };
+    </script>
+</body>
+</html>

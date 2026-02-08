@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tutor Dashboard - {{.LessonID}}</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="tutor-body">
+    <header>
+        <div>
+            <h1>Tutor Dashboard</h1>
+            <p>Lesson: <strong>{{.LessonID}}</strong> | Tutor: <strong>{{.TutorName}}</strong></p>
+        </div>
+        <div class="header-controls">
+            <div class="settings-group">
+                <label for="lesson-type">Lesson Type:</label>
+                <select id="lesson-type">
+                    <option value="fixed">Fixed (Tutor managed)</option>
+                    <option value="restricted-freq">Restricted Freq (Students choose set freqs)</option>
+                    <option value="open">Open (Students create/join any)</option>
+                </select>
+                <label>
+                    <input type="checkbox" id="callsign-verify"> Verify Callsign Changes
+                </label>
+            </div>
+            <div class="permissions">
+                <a href="/admin" target="_blank" class="button mini-btn">Admin Portal</a>
+                <button id="request-permissions">Request Mic/Speaker Permissions</button>
+                <span id="permission-status"></span>
+            </div>
+        </div>
+    </header>
+
+    <main class="tutor-layout">
+        <section class="tutor-pane">
+            <h2>Live Transcript</h2>
+            <div class="tutor-pane-content">
+                <div id="transcript-list" class="transcript-list">
+                    <!-- Transcripts will appear here -->
+                </div>
+            </div>
+        </section>
+
+        <section class="tutor-pane">
+            <h2>Participants</h2>
+            <div class="tutor-pane-content">
+                <div class="section-header">
+                    <h3>Tutors</h3>
+                </div>
+                <ul id="tutor-list">
+                    <!-- Tutors will appear here -->
+                </ul>
+                <div class="divider"></div>
+                <div class="section-header">
+                    <h3>Students</h3>
+                    <div id="pending-requests" class="pending-requests" style="display:none;">
+                        <h4>Pending Callsigns</h4>
+                        <ul id="pending-list"></ul>
+                    </div>
+                </div>
+                <ul id="student-list">
+                    <!-- Students will appear here -->
+                </ul>
+            </div>
+        </section>
+
+        <section class="tutor-pane">
+            <h2>Frequencies & Callsigns</h2>
+            <div class="tutor-pane-content">
+                <h3>Frequencies</h3>
+                <div id="frequency-list" class="frequency-grid">
+                    <!-- Frequencies will appear here -->
+                </div>
+                <div class="divider"></div>
+                <h3>Callsigns</h3>
+                <div id="callsign-list" class="callsign-grid">
+                    <!-- Callsigns will appear here -->
+                </div>
+            </div>
+        </section>
+
+        <section class="tutor-pane">
+            <h2>Actions</h2>
+            <div class="tutor-pane-content">
+                <button id="global-ptt-btn" class="ptt-btn">Global PTT</button>
+                <div class="divider"></div>
+                <button id="create-freq-btn">Create Frequency</button>
+                <button id="create-callsign-btn">Create Callsign</button>
+                <div class="divider"></div>
+                <button id="clean-students-btn" class="warning mini-btn">Clean Students</button>
+                <button id="clean-freqs-btn" class="warning mini-btn">Clean Frequencies</button>
+                <button id="clean-callsigns-btn" class="warning mini-btn">Clean Callsigns</button>
+                <button id="clear-freqs-btn" class="warning mini-btn">Clear All Frequencies</button>
+                <div class="divider"></div>
+                <button id="end-ex-btn" class="danger">END EX</button>
+                <button id="end-lesson-btn" class="danger">End Lesson</button>
+            </div>
+        </section>
+    </main>
+
+    <dialog id="freq-dialog">
+        <form method="dialog">
+            <h3>Create Frequency</h3>
+            <input type="text" id="new-freq-name" placeholder="Frequency name (e.g. 121.5 MHz)">
+            <div class="dialog-buttons">
+                <button value="cancel">Cancel</button>
+                <button id="confirm-freq" value="default">Create</button>
+            </div>
+        </form>
+    </dialog>
+
+    <dialog id="callsign-dialog">
+        <form method="dialog">
+            <h3>Create Callsign</h3>
+            <input type="text" id="new-callsign-name" placeholder="Callsign (e.g. Red Alpha)">
+            <div class="dialog-buttons">
+                <button value="cancel">Cancel</button>
+                <button id="confirm-callsign" value="default">Create</button>
+            </div>
+        </form>
+    </dialog>
+
+    <script src="/static/app.js"></script>
+    <script>
+        initTutor("{{.LessonID}}", "{{.UserID}}", "{{.TutorName}}");
+    </script>
+</body>
+</html>
