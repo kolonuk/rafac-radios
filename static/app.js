@@ -6,6 +6,9 @@ let isTutor = false;
 let frequencies = [];
 let callsigns = [];
 let students = [];
+let lessonType = 'fixed';
+let callsignVerify = false;
+let pendingCallsigns = [];
 
 // Audio variables
 let audioCtx;
@@ -38,6 +41,9 @@ function initWS() {
                 frequencies = msg.frequencies || [];
                 callsigns = msg.callsigns || [];
                 students = msg.students || [];
+                lessonType = msg.lesson_type;
+                callsignVerify = msg.callsign_verify;
+                pendingCallsigns = msg.pending_callsigns || [];
                 updateUI();
             } else if (msg.type === "force_leave") {
                 window.location.href = "/?error=Session ended by tutor";
@@ -194,6 +200,26 @@ function initTutor(lessonID, tutorID) {
         }
     };
 
+    const typeSelect = document.getElementById('lesson-type');
+    typeSelect.value = lessonType;
+    typeSelect.onchange = () => {
+        ws.send(JSON.stringify({
+            type: "update_settings",
+            lesson_type: typeSelect.value,
+            callsign_verify: document.getElementById('callsign-verify').checked
+        }));
+    };
+
+    const verifyCheck = document.getElementById('callsign-verify');
+    verifyCheck.checked = callsignVerify;
+    verifyCheck.onchange = () => {
+        ws.send(JSON.stringify({
+            type: "update_settings",
+            lesson_type: typeSelect.value,
+            callsign_verify: verifyCheck.checked
+        }));
+    };
+
     document.getElementById('request-permissions').onclick = requestPermissions;
     requestPermissions();
 }
@@ -241,8 +267,62 @@ function initStudent(lessonID, name) {
         }
     };
 
+    document.getElementById('change-freq-btn').onclick = () => {
+        if (confirm("Changing your frequency will stop your current transmission. Continue?")) {
+            showStudentFreqDialog();
+        }
+    };
+
+    document.getElementById('change-call-btn').onclick = () => {
+        if (confirm("Changing your callsign may require tutor approval. Continue?")) {
+            document.getElementById('student-callsign-dialog').showModal();
+        }
+    };
+
+    document.getElementById('confirm-call-change').onclick = (e) => {
+        e.preventDefault();
+        const newCall = document.getElementById('new-callsign-input').value;
+        if (newCall) {
+            ws.send(JSON.stringify({ type: "assign_callsign", callsign: newCall }));
+            document.getElementById('new-callsign-input').value = '';
+            document.getElementById('student-callsign-dialog').close();
+        }
+    };
+
+    document.getElementById('create-custom-freq').onclick = (e) => {
+        e.preventDefault();
+        const newFreq = document.getElementById('custom-freq-name').value;
+        if (newFreq) {
+            ws.send(JSON.stringify({ type: "add_frequency", frequency: newFreq }));
+            ws.send(JSON.stringify({ type: "assign_frequency", frequency: newFreq }));
+            document.getElementById('custom-freq-name').value = '';
+            document.getElementById('student-freq-dialog').close();
+        }
+    };
+
     document.getElementById('request-permissions-student').onclick = requestPermissions;
     requestPermissions();
+}
+
+function showStudentFreqDialog() {
+    const options = document.getElementById('freq-options');
+    options.innerHTML = '';
+    frequencies.forEach(f => {
+        const btn = document.createElement('button');
+        btn.textContent = f;
+        btn.className = 'frequency-item';
+        btn.onclick = (e) => {
+            e.preventDefault();
+            ws.send(JSON.stringify({ type: "assign_frequency", frequency: f }));
+            document.getElementById('student-freq-dialog').close();
+        };
+        options.appendChild(btn);
+    });
+
+    const openInput = document.getElementById('open-freq-input');
+    openInput.style.display = (lessonType === 'open') ? 'block' : 'none';
+
+    document.getElementById('student-freq-dialog').showModal();
 }
 
 async function requestPermissions() {
@@ -323,6 +403,32 @@ function updateUI() {
 }
 
 function updateTutorUI() {
+    // Update settings UI if they changed from elsewhere
+    document.getElementById('lesson-type').value = lessonType;
+    document.getElementById('callsign-verify').checked = callsignVerify;
+
+    // Update pending requests
+    const pendingRequests = document.getElementById('pending-requests');
+    const pendingList = document.getElementById('pending-list');
+    pendingList.innerHTML = '';
+    if (pendingCallsigns.length > 0) {
+        pendingRequests.style.display = 'block';
+        pendingCallsigns.forEach(req => {
+            const li = document.createElement('li');
+            li.className = 'pending-item';
+            li.innerHTML = `
+                <span>${req.student_name}: <strong>${req.new_callsign}</strong></span>
+                <div>
+                    <button class="mini-btn" onclick="approveCallsign('${req.student_id}', '${req.new_callsign}')">Approve</button>
+                    <button class="mini-btn remove-btn" onclick="denyCallsign('${req.student_id}', '${req.new_callsign}')">Deny</button>
+                </div>
+            `;
+            pendingList.appendChild(li);
+        });
+    } else {
+        pendingRequests.style.display = 'none';
+    }
+
     const studentList = document.getElementById('student-list');
     studentList.innerHTML = '';
     students.forEach(s => {
@@ -336,7 +442,11 @@ function updateTutorUI() {
 
         li.innerHTML = `
             <span>${s.name} ${s.callsign ? `[${s.callsign}]` : ''} ${s.frequency ? `(${s.frequency})` : ''}</span>
-            <span>${s.is_ptting ? '🎙️' : ''} ${receiving ? '🔊' : ''}</span>
+            <div class="student-actions">
+                ${s.frequency ? `<button class="remove-btn" onclick="removeFreq('${s.id}')">X Freq</button>` : ''}
+                ${s.callsign ? `<button class="remove-btn" onclick="removeCall('${s.id}')">X Call</button>` : ''}
+                <span>${s.is_ptting ? '🎙️' : ''} ${receiving ? '🔊' : ''}</span>
+            </div>
         `;
         li.draggable = true;
         li.ondragstart = (e) => {
@@ -413,6 +523,17 @@ function updateStudentUI() {
     const callDisp = document.getElementById('current-callsign');
     if (callDisp) callDisp.textContent = me.callsign || "None";
 
+    // Update buttons visibility based on lesson type
+    const changeFreqBtn = document.getElementById('change-freq-btn');
+    const changeCallBtn = document.getElementById('change-call-btn');
+    if (lessonType === 'fixed') {
+        changeFreqBtn.style.display = 'none';
+        changeCallBtn.style.display = 'none';
+    } else if (lessonType === 'restricted-freq' || lessonType === 'open') {
+        changeFreqBtn.style.display = 'inline-block';
+        changeCallBtn.style.display = 'inline-block';
+    }
+
     // Update background color if receiving
     const isReceiving = students.some(other => other.id !== currentStudentID && other.is_ptting && other.frequency === me.frequency && me.frequency !== "");
 
@@ -436,6 +557,32 @@ function updateStudentUI() {
             });
         }
     }
+
+    // Update freq status list (color changes like tutor)
+    const freqStatusList = document.getElementById('freq-status-list');
+    if (freqStatusList) {
+        freqStatusList.innerHTML = '';
+        frequencies.forEach(f => {
+            const li = document.createElement('li');
+            li.textContent = f;
+            li.style.padding = '0.3rem';
+            li.style.borderRadius = '4px';
+            li.style.marginBottom = '0.2rem';
+            li.style.textAlign = 'center';
+            li.style.border = '1px solid var(--border-color)';
+
+            const isTransmitting = students.some(s => s.is_ptting && s.frequency === f);
+            if (isTransmitting) {
+                li.style.backgroundColor = 'var(--error-color)';
+                li.style.color = 'white';
+            }
+            if (me.frequency === f) {
+                li.style.fontWeight = 'bold';
+                li.style.border = '2px solid var(--primary-color)';
+            }
+            freqStatusList.appendChild(li);
+        });
+    }
 }
 
 // Global release of listening state for tutors
@@ -451,3 +598,19 @@ window.addEventListener('touchend', () => {
         document.querySelectorAll('.listening').forEach(el => el.classList.remove('listening'));
     }
 });
+
+function removeFreq(studentID) {
+    ws.send(JSON.stringify({ type: "remove_frequency", student_id: studentID }));
+}
+
+function removeCall(studentID) {
+    ws.send(JSON.stringify({ type: "remove_callsign", student_id: studentID }));
+}
+
+function approveCallsign(studentID, callsign) {
+    ws.send(JSON.stringify({ type: "approve_callsign", student_id: studentID, callsign: callsign }));
+}
+
+function denyCallsign(studentID, callsign) {
+    ws.send(JSON.stringify({ type: "deny_callsign", student_id: studentID, callsign: callsign }));
+}

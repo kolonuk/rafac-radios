@@ -23,6 +23,14 @@ var (
 	}
 )
 
+type LessonType string
+
+const (
+	LessonFixed          LessonType = "fixed"           // Students change nothing
+	LessonRestrictedFreq LessonType = "restricted-freq" // Students choose from set freqs, can change callsign
+	LessonOpen           LessonType = "open"            // Students can create/join any freq
+)
+
 type Student struct {
 	ID        string `json:"id"`
 	Name      string `json:"name"`
@@ -36,6 +44,12 @@ type ConnState struct {
 	IsTutor   bool
 }
 
+type CallsignRequest struct {
+	StudentID   string `json:"student_id"`
+	StudentName string `json:"student_name"`
+	NewCallsign string `json:"new_callsign"`
+}
+
 type Lesson struct {
 	ID                 string              `json:"id"`
 	TutorID            string              `json:"tutor_id"`
@@ -45,6 +59,9 @@ type Lesson struct {
 	ActiveTransmitters map[string]string   `json:"active_transmitters"` // freq -> studentID
 	conns              map[*websocket.Conn]*ConnState
 	IsActive           bool                `json:"is_active"`
+	Type               LessonType          `json:"type"`
+	CallsignVerify     bool                `json:"callsign_verify"`
+	PendingCallsigns   []CallsignRequest   `json:"pending_callsigns"`
 	mu                 sync.Mutex
 }
 
@@ -75,6 +92,7 @@ func createLesson(id string, tutorID string) *Lesson {
 			Callsigns:          []string{},
 			ActiveTransmitters: make(map[string]string),
 			conns:              make(map[*websocket.Conn]*ConnState),
+			Type:               LessonFixed,
 		}
 		lessons[id] = l
 	}
@@ -144,16 +162,20 @@ func studentHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 type Message struct {
-	Type        string     `json:"type"`
-	LessonID    string     `json:"lesson_id,omitempty"`
-	StudentID   string     `json:"student_id,omitempty"`
-	Name        string     `json:"name,omitempty"`
-	Frequency   string     `json:"frequency,omitempty"`
-	Frequencies []string   `json:"frequencies,omitempty"`
-	Callsign    string     `json:"callsign,omitempty"`
-	Callsigns   []string   `json:"callsigns,omitempty"`
-	IsPTTing    bool       `json:"is_ptting,omitempty"`
-	Students    []*Student `json:"students,omitempty"`
+	Type             string            `json:"type"`
+	LessonID         string            `json:"lesson_id,omitempty"`
+	StudentID        string            `json:"student_id,omitempty"`
+	Name             string            `json:"name,omitempty"`
+	Frequency        string            `json:"frequency,omitempty"`
+	Frequencies      []string          `json:"frequencies,omitempty"`
+	Callsign         string            `json:"callsign,omitempty"`
+	Callsigns        []string          `json:"callsigns,omitempty"`
+	IsPTTing         bool              `json:"is_ptting,omitempty"`
+	Students         []*Student        `json:"students,omitempty"`
+	LessonType       LessonType        `json:"lesson_type,omitempty"`
+	CallsignVerify   bool              `json:"callsign_verify,omitempty"`
+	PendingCallsigns []CallsignRequest `json:"pending_callsigns,omitempty"`
+	Message          string            `json:"message,omitempty"`
 }
 
 func wsHandler(w http.ResponseWriter, r *http.Request) {
@@ -197,7 +219,8 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 			if currentLesson != nil && currentStudentID != "" {
 				currentLesson.mu.Lock()
 				student, ok := currentLesson.Students[currentStudentID]
-				if ok && student.IsPTTing && student.Frequency != "" {
+				// Requirement: make sure a student can't transmit or receive if they do not have a freq or call sign
+				if ok && student.IsPTTing && student.Frequency != "" && student.Callsign != "" {
 					if currentLesson.ActiveTransmitters[student.Frequency] == currentStudentID {
 						for otherConn, state := range currentLesson.conns {
 							if otherConn == conn {
@@ -210,7 +233,7 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 								otherConn.WriteMessage(websocket.BinaryMessage, fullMsg)
 							} else {
 								otherStudent := currentLesson.Students[state.StudentID]
-								if otherStudent != nil && otherStudent.Frequency == student.Frequency {
+								if otherStudent != nil && otherStudent.Frequency == student.Frequency && otherStudent.Callsign != "" {
 									otherConn.WriteMessage(websocket.BinaryMessage, msgData)
 								}
 							}
@@ -229,18 +252,12 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 
 		switch msg.Type {
 		case "join":
-			// For tutor, we should allow them to join and create if needed,
-			// but we already have tutorHandler creating it.
-			// Students MUST have an existing active lesson.
 			l := getLesson(msg.LessonID)
 			if msg.StudentID == "" { // Tutor
 				isTutor = true
-				// Even if lesson is not active, tutor can join to reactivate?
-				// tutorHandler already called createLesson which sets IsActive=true.
 				lessonsMu.Lock()
-				l = lessons[msg.LessonID] // Get lesson regardless of IsActive for tutor
+				l = lessons[msg.LessonID]
 				if l == nil {
-					// This shouldn't happen if they went through tutorHandler
 					l = &Lesson{
 						ID:                 msg.LessonID,
 						Students:           make(map[string]*Student),
@@ -249,6 +266,7 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 						ActiveTransmitters: make(map[string]string),
 						conns:              make(map[*websocket.Conn]*ConnState),
 						IsActive:           true,
+						Type:               LessonFixed,
 					}
 					lessons[msg.LessonID] = l
 				} else {
@@ -276,22 +294,162 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 			l.mu.Unlock()
 			broadcastUpdate(l)
 
-		case "add_frequency":
+		case "update_settings":
 			if currentLesson != nil && isTutor {
 				currentLesson.mu.Lock()
-				currentLesson.Frequencies = append(currentLesson.Frequencies, msg.Frequency)
+				currentLesson.Type = msg.LessonType
+				currentLesson.CallsignVerify = msg.CallsignVerify
+				currentLesson.mu.Unlock()
+				broadcastUpdate(currentLesson)
+			}
+
+		case "add_frequency":
+			if currentLesson != nil {
+				currentLesson.mu.Lock()
+				// Students can only add if LessonOpen
+				if isTutor || currentLesson.Type == LessonOpen {
+					currentLesson.Frequencies = append(currentLesson.Frequencies, msg.Frequency)
+				}
 				currentLesson.mu.Unlock()
 				broadcastUpdate(currentLesson)
 			}
 
 		case "assign_frequency":
+			if currentLesson != nil {
+				currentLesson.mu.Lock()
+				canAssign := isTutor
+				if !isTutor {
+					if currentLesson.Type == LessonOpen || currentLesson.Type == LessonRestrictedFreq {
+						canAssign = true
+						msg.StudentID = currentStudentID
+					}
+				}
+				if canAssign {
+					if s, ok := currentLesson.Students[msg.StudentID]; ok {
+						if s.IsPTTing && s.Frequency != "" && currentLesson.ActiveTransmitters[s.Frequency] == s.ID {
+							delete(currentLesson.ActiveTransmitters, s.Frequency)
+						}
+						s.Frequency = msg.Frequency
+					}
+				}
+				currentLesson.mu.Unlock()
+				broadcastUpdate(currentLesson)
+			}
+
+		case "remove_frequency":
 			if currentLesson != nil && isTutor {
 				currentLesson.mu.Lock()
 				if s, ok := currentLesson.Students[msg.StudentID]; ok {
 					if s.IsPTTing && s.Frequency != "" && currentLesson.ActiveTransmitters[s.Frequency] == s.ID {
 						delete(currentLesson.ActiveTransmitters, s.Frequency)
 					}
-					s.Frequency = msg.Frequency
+					s.Frequency = ""
+				}
+				currentLesson.mu.Unlock()
+				broadcastUpdate(currentLesson)
+			}
+
+		case "add_callsign":
+			if currentLesson != nil && isTutor {
+				currentLesson.mu.Lock()
+				currentLesson.Callsigns = append(currentLesson.Callsigns, msg.Callsign)
+				currentLesson.mu.Unlock()
+				broadcastUpdate(currentLesson)
+			}
+
+		case "assign_callsign":
+			if currentLesson != nil {
+				currentLesson.mu.Lock()
+				canAssign := isTutor
+				if !isTutor {
+					if currentLesson.Type == LessonOpen || currentLesson.Type == LessonRestrictedFreq {
+						// Only if verified or verification disabled
+						if !currentLesson.CallsignVerify {
+							canAssign = true
+							msg.StudentID = currentStudentID
+						} else {
+							// Add to pending
+							currentLesson.PendingCallsigns = append(currentLesson.PendingCallsigns, CallsignRequest{
+								StudentID:   currentStudentID,
+								StudentName: currentLesson.Students[currentStudentID].Name,
+								NewCallsign: msg.Callsign,
+							})
+						}
+					}
+				}
+
+				if canAssign {
+					// Check for uniqueness
+					unique := true
+					for _, s := range currentLesson.Students {
+						if s.Callsign == msg.Callsign && s.ID != msg.StudentID {
+							unique = false
+							break
+						}
+					}
+					if unique {
+						if s, ok := currentLesson.Students[msg.StudentID]; ok {
+							s.Callsign = msg.Callsign
+						}
+					} else if !isTutor {
+						conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"error","message":"Callsign already in use"}`))
+					}
+				}
+				currentLesson.mu.Unlock()
+				broadcastUpdate(currentLesson)
+			}
+
+		case "approve_callsign":
+			if currentLesson != nil && isTutor {
+				currentLesson.mu.Lock()
+				// Find and remove from pending
+				var req CallsignRequest
+				found := false
+				for i, r := range currentLesson.PendingCallsigns {
+					if r.StudentID == msg.StudentID && r.NewCallsign == msg.Callsign {
+						req = r
+						currentLesson.PendingCallsigns = append(currentLesson.PendingCallsigns[:i], currentLesson.PendingCallsigns[i+1:]...)
+						found = true
+						break
+					}
+				}
+				if found {
+					// Check uniqueness
+					unique := true
+					for _, s := range currentLesson.Students {
+						if s.Callsign == req.NewCallsign {
+							unique = false
+							break
+						}
+					}
+					if unique {
+						if s, ok := currentLesson.Students[req.StudentID]; ok {
+							s.Callsign = req.NewCallsign
+						}
+					}
+				}
+				currentLesson.mu.Unlock()
+				broadcastUpdate(currentLesson)
+			}
+
+		case "deny_callsign":
+			if currentLesson != nil && isTutor {
+				currentLesson.mu.Lock()
+				for i, r := range currentLesson.PendingCallsigns {
+					if r.StudentID == msg.StudentID && r.NewCallsign == msg.Callsign {
+						currentLesson.PendingCallsigns = append(currentLesson.PendingCallsigns[:i], currentLesson.PendingCallsigns[i+1:]...)
+						break
+					}
+				}
+				currentLesson.mu.Unlock()
+				broadcastUpdate(currentLesson)
+			}
+
+		case "remove_callsign":
+			if currentLesson != nil && isTutor {
+				currentLesson.mu.Lock()
+				if s, ok := currentLesson.Students[msg.StudentID]; ok {
+					s.Callsign = ""
 				}
 				currentLesson.mu.Unlock()
 				broadcastUpdate(currentLesson)
@@ -308,41 +466,26 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 				broadcastUpdate(currentLesson)
 			}
 
-		case "add_callsign":
-			if currentLesson != nil && isTutor {
-				currentLesson.mu.Lock()
-				currentLesson.Callsigns = append(currentLesson.Callsigns, msg.Callsign)
-				currentLesson.mu.Unlock()
-				broadcastUpdate(currentLesson)
-			}
-
-		case "assign_callsign":
-			if currentLesson != nil && isTutor {
-				currentLesson.mu.Lock()
-				if s, ok := currentLesson.Students[msg.StudentID]; ok {
-					s.Callsign = msg.Callsign
-				}
-				currentLesson.mu.Unlock()
-				broadcastUpdate(currentLesson)
-			}
-
 		case "ptt":
 			if currentLesson != nil && currentStudentID != "" {
 				currentLesson.mu.Lock()
 				if s, ok := currentLesson.Students[currentStudentID]; ok {
-					if msg.IsPTTing {
-						if s.Frequency != "" {
+					// Requirement: must have both freq and callsign to transmit
+					if s.Frequency != "" && s.Callsign != "" {
+						if msg.IsPTTing {
 							if _, busy := currentLesson.ActiveTransmitters[s.Frequency]; !busy {
 								currentLesson.ActiveTransmitters[s.Frequency] = currentStudentID
 								s.IsPTTing = true
 							} else {
 								s.IsPTTing = false
 							}
+						} else {
+							if s.IsPTTing && currentLesson.ActiveTransmitters[s.Frequency] == currentStudentID {
+								delete(currentLesson.ActiveTransmitters, s.Frequency)
+							}
+							s.IsPTTing = false
 						}
 					} else {
-						if s.IsPTTing && s.Frequency != "" && currentLesson.ActiveTransmitters[s.Frequency] == currentStudentID {
-							delete(currentLesson.ActiveTransmitters, s.Frequency)
-						}
 						s.IsPTTing = false
 					}
 				}
@@ -399,11 +542,7 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 				currentLesson.mu.Lock()
 				currentLesson.IsActive = false
 				forceLeaveAllStudents(currentLesson)
-				// Also clear everything for this lesson?
-				// Or keep it but inactive? The prompt says "students can not log on until tutur creates a lesson id".
-				// Let's just keep it inactive.
 				currentLesson.mu.Unlock()
-				// Tutor will also redirect on their end after sending this message.
 			}
 		}
 	}
@@ -429,11 +568,14 @@ func broadcastUpdate(l *Lesson) {
 	}
 
 	msg := Message{
-		Type:        "update",
-		LessonID:    l.ID,
-		Frequencies: l.Frequencies,
-		Callsigns:   l.Callsigns,
-		Students:    students,
+		Type:             "update",
+		LessonID:         l.ID,
+		Frequencies:      l.Frequencies,
+		Callsigns:        l.Callsigns,
+		Students:         students,
+		LessonType:       l.Type,
+		CallsignVerify:   l.CallsignVerify,
+		PendingCallsigns: l.PendingCallsigns,
 	}
 
 	data, _ := json.Marshal(msg)

@@ -1,2 +1,56 @@
-# rafac-radios
-A simple app to facilitate the teaching of radios virtually over the internet
+# Radio Teaching App
+
+A virtual radio training application designed for tutors to conduct simulated radio communication lessons.
+
+## Features
+
+- **Multi-session Support**: Multiple tutors can run separate lessons simultaneously using unique Lesson IDs.
+- **Tutor Dashboard**:
+    - **Lesson Management**: Choose between Fixed, Restricted Frequency, or Open lesson types.
+    - **Real-time Monitoring**: Monitor student statuses and listen to specific frequencies or students using "tap and hold".
+    - **Frequency & Callsign Management**: Create and assign frequencies and callsigns via drag-and-drop.
+    - **Student Control**: Clean student lists, remove specific assignments, and end the exercise globally.
+    - **Callsign Verification**: Option to manually approve or deny student-initiated callsign changes.
+- **Student View**:
+    - **Push-To-Talk (PTT)**: Half-duplex communication using Mouse/Touch or the Space bar.
+    - **Visual Feedback**: Screen turns red when transmitting and green when receiving. Frequency list shows active transmissions.
+    - **Callsign & Frequency Choice**: Depending on the lesson type, students can change their own frequency or request a callsign change.
+    - **Presence**: See others currently on the same frequency.
+- **Realistic Audio**: Integrated Web Audio API filters (bandpass 300Hz-3kHz) and normalization to simulate radio quality.
+
+## Getting Started
+
+### Prerequisites
+
+- [Docker](https://www.docker.com/)
+
+### Running the App
+
+1. Build the Docker image:
+   ```bash
+   docker build -t rafac-radios .
+   ```
+
+2. Run the container:
+   ```bash
+   docker run -p 8080:8080 -e TUTOR_ID=your_secret_id rafac-radios
+   ```
+
+3. Access the app:
+    - Open `http://localhost:8080` in your browser.
+    - **Tutor**: Enter the `TUTOR_ID` set in the environment variable and a unique `Lesson ID`.
+    - **Student**: Enter your name and the `Lesson ID` provided by the tutor.
+
+## Lesson Types
+
+- **Fixed**: Students cannot change their frequency or callsign. Everything is managed by the tutor.
+- **Restricted Freq**: Students can choose from frequencies already created by the tutor. They can also change their callsign.
+- **Open**: Students can create new frequencies, join any frequency, and change their callsign.
+
+## Technical Details
+
+- **Backend**: Go with Gorilla WebSockets for real-time synchronization.
+- **Frontend**: Vanilla JavaScript and CSS (supporting dark/light system themes).
+- **Audio**: Web Audio API for capture, processing, and playback.
+- **Exclusivity**: Only one transmitter is allowed per frequency at a time (first-come, first-served).
+- **Security**: Students must have both a Frequency and a unique Callsign assigned to transmit or receive audio.

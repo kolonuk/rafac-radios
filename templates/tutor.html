@@ -9,15 +9,34 @@
 <body class="tutor-body">
     <header>
         <h1>Tutor Dashboard - Lesson: <span id="display-lesson-id">{{.LessonID}}</span></h1>
-        <div class="permissions">
-            <button id="request-permissions">Request Mic/Speaker Permissions</button>
-            <span id="permission-status"></span>
+        <div class="header-controls">
+            <div class="settings-group">
+                <label for="lesson-type">Lesson Type:</label>
+                <select id="lesson-type">
+                    <option value="fixed">Fixed (Tutor managed)</option>
+                    <option value="restricted-freq">Restricted Freq (Students choose set freqs)</option>
+                    <option value="open">Open (Students create/join any)</option>
+                </select>
+                <label>
+                    <input type="checkbox" id="callsign-verify"> Verify Callsign Changes
+                </label>
+            </div>
+            <div class="permissions">
+                <button id="request-permissions">Request Mic/Speaker Permissions</button>
+                <span id="permission-status"></span>
+            </div>
         </div>
     </header>
 
     <main class="tutor-layout">
         <section class="student-list-container">
-            <h2>Students</h2>
+            <div class="section-header">
+                <h2>Students</h2>
+                <div id="pending-requests" class="pending-requests" style="display:none;">
+                    <h3>Pending Callsigns</h3>
+                    <ul id="pending-list"></ul>
+                </div>
+            </div>
             <ul id="student-list">
                 <!-- Students will appear here -->
             </ul>

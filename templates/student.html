@@ -13,14 +13,21 @@
 
         <div class="callsign-display">
             Your Callsign: <span id="current-callsign">None</span>
+            <button id="change-call-btn" class="mini-btn" style="display:none;">Change</button>
         </div>
 
         <div class="frequency-display">
             Current Frequency: <span id="current-frequency">None</span>
+            <button id="change-freq-btn" class="mini-btn" style="display:none;">Change</button>
         </div>
 
         <div class="others-list">
-            <strong>Others on this frequency:</strong>
+            <strong>Frequencies:</strong>
+            <ul id="freq-status-list">
+                <!-- Frequencies with status colors -->
+            </ul>
+            <br>
+            <strong>Others on your frequency:</strong>
             <ul id="others-on-freq">
                 <!-- Others will appear here -->
             </ul>
@@ -38,6 +45,31 @@
 
         <a href="/" class="button leave-btn">Leave</a>
     </div>
+
+    <dialog id="student-freq-dialog">
+        <form method="dialog">
+            <h3>Join Frequency</h3>
+            <div id="freq-options" class="frequency-grid"></div>
+            <div id="open-freq-input" style="display:none; margin-top:1rem;">
+                <input type="text" id="custom-freq-name" placeholder="New frequency name">
+                <button id="create-custom-freq">Create & Join</button>
+            </div>
+            <div class="dialog-buttons">
+                <button value="cancel">Cancel</button>
+            </div>
+        </form>
+    </dialog>
+
+    <dialog id="student-callsign-dialog">
+        <form method="dialog">
+            <h3>Change Callsign</h3>
+            <input type="text" id="new-callsign-input" placeholder="Enter new callsign">
+            <div class="dialog-buttons">
+                <button value="cancel">Cancel</button>
+                <button id="confirm-call-change" value="default">Request Change</button>
+            </div>
+        </form>
+    </dialog>
 
     <script src="/static/app.js"></script>
     <script>
