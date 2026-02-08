@@ -129,7 +129,12 @@ async function handleIncomingAudio(data) {
 function playAudio(arrayBuffer) {
     if (!audioCtx) return;
     try {
-        const float32Data = new Float32Array(arrayBuffer);
+        const int16Data = new Int16Array(arrayBuffer);
+        const float32Data = new Float32Array(int16Data.length);
+        for (let i = 0; i < int16Data.length; i++) {
+            float32Data[i] = int16Data[i] / (int16Data[i] < 0 ? 0x8000 : 0x7FFF);
+        }
+
         const audioBuffer = audioCtx.createBuffer(1, float32Data.length, audioCtx.sampleRate);
         audioBuffer.getChannelData(0).set(float32Data);
 
@@ -473,17 +478,25 @@ function startRecording() {
     processorNode.onaudioprocess = (e) => {
         if (ws && ws.readyState === WebSocket.OPEN) {
             const inputData = e.inputBuffer.getChannelData(0);
+
+            // Convert to Int16 PCM
+            const int16Buffer = new Int16Array(inputData.length);
+            for (let i = 0; i < inputData.length; i++) {
+                const s = Math.max(-1, Math.min(1, inputData[i]));
+                int16Buffer[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+            }
+
             if (isTutor && tutorPTTTarget) {
                 // Prepend "TUTOR|Target|" to binary data
                 const header = `TUTOR|${tutorPTTTarget}|`;
                 const headerBytes = new TextEncoder().encode(header);
-                const combined = new Uint8Array(headerBytes.length + inputData.buffer.byteLength);
+                const combined = new Uint8Array(headerBytes.length + int16Buffer.buffer.byteLength);
                 combined.set(headerBytes);
-                combined.set(new Uint8Array(inputData.buffer), headerBytes.length);
+                combined.set(new Uint8Array(int16Buffer.buffer), headerBytes.length);
                 ws.send(combined.buffer);
             } else {
-                // Send as Float32Array binary data
-                ws.send(inputData.buffer);
+                // Send as Int16 binary data
+                ws.send(int16Buffer.buffer);
             }
         }
     };

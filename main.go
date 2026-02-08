@@ -18,6 +18,14 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+const (
+	// AppVersion is the current version of the application.
+	// REMINDER: Increase this version number when making Pull Requests!
+	AppVersion = "1.0.1"
+	// GithubURL is the link to the project source code.
+	GithubURL = "https://github.com/user/rafac-radios"
+)
+
 var (
 	systemCodeEnv = os.Getenv("SYSTEM_CODE")
 	upgrader      = websocket.Upgrader{
@@ -61,6 +69,8 @@ var sm = &SecurityManager{
 	Stats: make(map[string]*IPStats),
 }
 
+// RecordAttempt logs a login or join attempt for security tracking.
+// It tracks recent failures to trigger temporary blocks and total failures for permanent blocks.
 func (s *SecurityManager) RecordAttempt(ip string, success bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -99,6 +109,8 @@ func (s *SecurityManager) RecordAttempt(ip string, success bool) {
 	}
 }
 
+// IsBlocked checks if a given IP address is currently restricted from accessing the service.
+// It returns a boolean and a reason message if blocked.
 func (s *SecurityManager) IsBlocked(ip string) (bool, string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -122,6 +134,7 @@ func (s *SecurityManager) IsBlocked(ip string) (bool, string) {
 	return false, ""
 }
 
+// getIP extracts the remote IP address from an incoming HTTP request.
 func getIP(r *http.Request) string {
 	ip, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
@@ -130,6 +143,7 @@ func getIP(r *http.Request) string {
 	return ip
 }
 
+// isAdmin checks if the current request has valid administrator credentials via cookie.
 func isAdmin(r *http.Request) bool {
 	cookie, err := r.Cookie("admin_access")
 	if err != nil {
@@ -159,10 +173,40 @@ type LogEntry struct {
 	Transcript string    `json:"transcript,omitempty"`
 }
 
+type WSMessage struct {
+	Type int
+	Data []byte
+}
+
 type ConnState struct {
 	UserID      string
 	IsTutor     bool
 	IsMainTutor bool
+	send        chan WSMessage
+}
+
+// writer is a dedicated goroutine per connection that handles sending messages from the 'send' channel
+// to the actual WebSocket. This prevents blocking the main relay loop.
+func (s *ConnState) writer(conn *websocket.Conn) {
+	for msg := range s.send {
+		err := conn.WriteMessage(msg.Type, msg.Data)
+		if err != nil {
+			break
+		}
+	}
+}
+
+// sendMessage safely pushes a message onto a connection's send channel without blocking.
+// If the channel is full, the message is dropped to ensure system stability.
+func sendMessage(s *ConnState, msgType int, data []byte) {
+	if s == nil || s.send == nil {
+		return
+	}
+	select {
+	case s.send <- WSMessage{Type: msgType, Data: data}:
+	default:
+		// Drop message if buffer is full to avoid blocking the relay loop
+	}
 }
 
 type CallsignRequest struct {
@@ -199,8 +243,10 @@ type Lesson struct {
 var (
 	lessons   = make(map[string]*Lesson)
 	lessonsMu sync.Mutex
+	mumble    *MumbleBackend
 )
 
+// getLesson retrieves an active lesson by its ID. Returns nil if not found or inactive.
 func getLesson(id string) *Lesson {
 	lessonsMu.Lock()
 	defer lessonsMu.Unlock()
@@ -211,6 +257,8 @@ func getLesson(id string) *Lesson {
 	return l
 }
 
+// createLesson initializes a new lesson session or reactivates an existing one.
+// The first tutor to create the lesson becomes the MainTutor.
 func createLesson(id string, tutorID string, tutorName string) *Lesson {
 	lessonsMu.Lock()
 	defer lessonsMu.Unlock()
@@ -241,11 +289,15 @@ func createLesson(id string, tutorID string, tutorName string) *Lesson {
 	return l
 }
 
+// main initializes the server, sets up routing, and starts the HTTP listener.
 func main() {
 	if systemCodeEnv == "" {
 		systemCodeEnv = "admin"
 	}
 	os.MkdirAll("logs", 0755)
+
+	mumble = NewMumbleBackend()
+	mumble.Start()
 
 	http.HandleFunc("/", landingHandler)
 	http.HandleFunc("/tutor", tutorHandler)
@@ -255,6 +307,7 @@ func main() {
 	http.HandleFunc("/admin/block", manualBlockHandler)
 	http.HandleFunc("/admin/toggle-perm", togglePermHandler)
 	http.HandleFunc("/admin/download", downloadZipHandler)
+	http.HandleFunc("/admin/check-update", checkUpdateHandler)
 	http.HandleFunc("/run-tests", runTestsHandler)
 	http.HandleFunc("/check_name", checkNameHandler)
 	http.HandleFunc("/ws", wsHandler)
@@ -266,11 +319,16 @@ func main() {
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }
 
+// landingHandler serves the main entry page of the application.
 func landingHandler(w http.ResponseWriter, r *http.Request) {
 	tmpl := template.Must(template.ParseFiles("templates/index.html"))
-	tmpl.Execute(w, nil)
+	tmpl.Execute(w, map[string]string{
+		"Version":   AppVersion,
+		"GithubURL": GithubURL,
+	})
 }
 
+// tutorHandler validates tutor credentials and serves the tutor dashboard.
 func tutorHandler(w http.ResponseWriter, r *http.Request) {
 	ip := getIP(r)
 	if blocked, msg := sm.IsBlocked(ip); blocked {
@@ -310,9 +368,17 @@ func tutorHandler(w http.ResponseWriter, r *http.Request) {
 	createLesson(lID, uID, tName)
 
 	tmpl := template.Must(template.ParseFiles("templates/tutor.html"))
-	tmpl.Execute(w, map[string]string{"LessonID": lID, "TutorName": tName, "SystemCode": tID, "UserID": uID})
+	tmpl.Execute(w, map[string]string{
+		"LessonID":   lID,
+		"TutorName":  tName,
+		"SystemCode": tID,
+		"UserID":     uID,
+		"Version":    AppVersion,
+		"GithubURL":  GithubURL,
+	})
 }
 
+// studentHandler validates the lesson ID and serves the student interface.
 func studentHandler(w http.ResponseWriter, r *http.Request) {
 	ip := getIP(r)
 	if blocked, msg := sm.IsBlocked(ip); blocked {
@@ -345,9 +411,17 @@ func studentHandler(w http.ResponseWriter, r *http.Request) {
 	mainTutorName := l.Tutors[l.MainTutorID]
 
 	tmpl := template.Must(template.ParseFiles("templates/student.html"))
-	tmpl.Execute(w, map[string]string{"Name": name, "LessonID": lID, "TutorName": mainTutorName, "UserID": uID})
+	tmpl.Execute(w, map[string]string{
+		"Name":      name,
+		"LessonID":  lID,
+		"TutorName": mainTutorName,
+		"UserID":    uID,
+		"Version":   AppVersion,
+		"GithubURL": GithubURL,
+	})
 }
 
+// checkNameHandler checks if a student name is already taken within a specific lesson.
 func checkNameHandler(w http.ResponseWriter, r *http.Request) {
 	lessonID := r.URL.Query().Get("lesson_id")
 	name := r.URL.Query().Get("name")
@@ -375,6 +449,7 @@ func checkNameHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("ok"))
 }
 
+// downloadZipHandler serves the generated lesson log archives to administrators.
 func downloadZipHandler(w http.ResponseWriter, r *http.Request) {
 	if !isAdmin(r) {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
@@ -389,6 +464,7 @@ func downloadZipHandler(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, file)
 }
 
+// adminHandler serves the administrative dashboard listing lessons and security stats.
 func adminHandler(w http.ResponseWriter, r *http.Request) {
 	if !isAdmin(r) {
 		http.Redirect(w, r, "/?error=Unauthorized Admin Access", http.StatusFound)
@@ -437,12 +513,15 @@ func adminHandler(w http.ResponseWriter, r *http.Request) {
 		"Lessons":    activeLessons,
 		"BlockedIPs": blockedIPs,
 		"Zips":       zips,
+		"Version":    AppVersion,
+		"GithubURL":  GithubURL,
 	}
 
 	tmpl := template.Must(template.ParseFiles("templates/admin.html"))
 	tmpl.Execute(w, data)
 }
 
+// unblockHandler removes all security restrictions for a specific IP address.
 func unblockHandler(w http.ResponseWriter, r *http.Request) {
 	if !isAdmin(r) {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
@@ -461,6 +540,7 @@ func unblockHandler(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/admin", http.StatusFound)
 }
 
+// manualBlockHandler allows an administrator to manually place a permanent block on an IP.
 func manualBlockHandler(w http.ResponseWriter, r *http.Request) {
 	if !isAdmin(r) {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
@@ -480,6 +560,26 @@ func manualBlockHandler(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/admin", http.StatusFound)
 }
 
+// checkUpdateHandler compares the current application version against the latest available.
+func checkUpdateHandler(w http.ResponseWriter, r *http.Request) {
+	if !isAdmin(r) {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// In a real scenario, this would fetch from a remote URL like GitHub.
+	// For now, we simulate the check.
+	latestVersion := "1.0.1" // This should be fetched dynamically in production
+
+	resp := map[string]string{
+		"latest": latestVersion,
+		"current": AppVersion,
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+// togglePermHandler switches an IP block status between temporary and permanent.
 func togglePermHandler(w http.ResponseWriter, r *http.Request) {
 	if !isAdmin(r) {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
@@ -500,6 +600,7 @@ func togglePermHandler(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/admin", http.StatusFound)
 }
 
+// runTestsHandler executes the backend Go tests and returns the output as plain text.
 func runTestsHandler(w http.ResponseWriter, r *http.Request) {
 	if !isAdmin(r) {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
@@ -536,6 +637,7 @@ type Message struct {
 	Text             string            `json:"text,omitempty"`
 }
 
+// wsHandler manages the WebSocket lifecycle, handling both JSON control messages and binary audio streams.
 func wsHandler(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -547,6 +649,11 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 	var currentUserID string
 	var currentLesson *Lesson
 	var state *ConnState
+
+	// The writer goroutine will handle all writes to this connection.
+	// This makes it thread-safe and non-blocking for the relay logic.
+	// Buffer size of 256 messages to handle bursts of audio packets.
+	sendChan := make(chan WSMessage, 256)
 
 	for {
 		msgType, msgData, err := conn.ReadMessage()
@@ -581,10 +688,14 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 
 		if msgType == websocket.BinaryMessage {
 			if currentLesson != nil && currentUserID != "" && state != nil {
+				var targets []*ConnState
+				var tutorHeader []byte
+				var audioToRelay []byte
+				var isTutorAudio bool
+
 				currentLesson.mu.Lock()
 				if state.IsTutor {
-					// Tutor binary message: "TUTOR|Target|" + audio
-					// Target is freq name or "GLOBAL"
+					isTutorAudio = true
 					data := msgData
 					if len(data) > 6 && string(data[:6]) == "TUTOR|" {
 						headerEnd := -1
@@ -601,23 +712,21 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 						if headerEnd != -1 {
 							headerParts := strings.Split(string(data[:headerEnd]), "|")
 							target := headerParts[1]
-							audio := data[headerEnd+1:]
+							audioToRelay = data[headerEnd+1:]
 
-							currentLesson.ActiveRecordings[currentUserID] = append(currentLesson.ActiveRecordings[currentUserID], audio...)
+							currentLesson.ActiveRecordings[currentUserID] = append(currentLesson.ActiveRecordings[currentUserID], audioToRelay...)
 
-							for otherConn, otherState := range currentLesson.conns {
-								if otherConn == conn {
+							for _, otherState := range currentLesson.conns {
+								if otherState.UserID == currentUserID {
 									continue
 								}
 								if otherState.IsTutor {
-									// Tutors hear everything from other tutors too?
-									// Usually helpful. Let's send it.
-									otherConn.WriteMessage(websocket.BinaryMessage, msgData)
+									targets = append(targets, otherState)
 								} else {
 									s := currentLesson.Students[otherState.UserID]
 									if s != nil && s.Callsign != "" {
 										if target == "GLOBAL" || s.Frequency == target {
-											otherConn.WriteMessage(websocket.BinaryMessage, audio)
+											targets = append(targets, otherState)
 										}
 									}
 								}
@@ -628,20 +737,22 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 					student, ok := currentLesson.Students[currentUserID]
 					if ok && student.IsPTTing && student.Frequency != "" && student.Callsign != "" {
 						if currentLesson.ActiveTransmitters[student.Frequency] == currentUserID {
-							currentLesson.ActiveRecordings[currentUserID] = append(currentLesson.ActiveRecordings[currentUserID], msgData...)
-							for otherConn, otherState := range currentLesson.conns {
-								if otherConn == conn {
+							audioToRelay = msgData
+							currentLesson.ActiveRecordings[currentUserID] = append(currentLesson.ActiveRecordings[currentUserID], audioToRelay...)
+
+							header := fmt.Sprintf("%s|%s|", student.ID, student.Frequency)
+							tutorHeader = []byte(header)
+
+							for _, otherState := range currentLesson.conns {
+								if otherState.UserID == currentUserID {
 									continue
 								}
 								if otherState.IsTutor {
-									header := fmt.Sprintf("%s|%s|", student.ID, student.Frequency)
-									headerBytes := []byte(header)
-									fullMsg := append(headerBytes, msgData...)
-									otherConn.WriteMessage(websocket.BinaryMessage, fullMsg)
+									targets = append(targets, otherState)
 								} else {
 									otherStudent := currentLesson.Students[otherState.UserID]
 									if otherStudent != nil && otherStudent.Frequency == student.Frequency && otherStudent.Callsign != "" {
-										otherConn.WriteMessage(websocket.BinaryMessage, msgData)
+										targets = append(targets, otherState)
 									}
 								}
 							}
@@ -649,6 +760,31 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 				currentLesson.mu.Unlock()
+
+				// Relay to Mumble if enabled
+				if mumble != nil && mumble.Enabled && len(audioToRelay) > 0 {
+					mumble.Broadcast(currentLesson.ID, "", audioToRelay)
+				}
+
+				// Relay outside the lock
+				if len(targets) > 0 {
+					for _, targetState := range targets {
+						if isTutorAudio {
+							if targetState.IsTutor {
+								sendMessage(targetState, websocket.BinaryMessage, msgData)
+							} else {
+								sendMessage(targetState, websocket.BinaryMessage, audioToRelay)
+							}
+						} else {
+							if targetState.IsTutor {
+								fullMsg := append(tutorHeader, audioToRelay...)
+								sendMessage(targetState, websocket.BinaryMessage, fullMsg)
+							} else {
+								sendMessage(targetState, websocket.BinaryMessage, audioToRelay)
+							}
+						}
+					}
+				}
 			}
 			continue
 		}
@@ -686,7 +822,9 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 				UserID:      currentUserID,
 				IsTutor:     isTutor,
 				IsMainTutor: isTutor && l.MainTutorID == currentUserID,
+				send:        sendChan,
 			}
+			go state.writer(conn)
 			if !isTutor {
 				l.Students[currentUserID] = &Student{
 					ID:   currentUserID,
@@ -796,7 +934,7 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 							currentLesson.logEvent(targetID, s.Name, s.Callsign, s.Frequency, "Callsign assigned")
 						}
 					} else if !state.IsTutor {
-						conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"error","message":"Callsign already in use"}`))
+					sendMessage(state, websocket.TextMessage, []byte(`{"type":"error","message":"Callsign already in use"}`))
 					}
 				}
 				currentLesson.mu.Unlock()
@@ -884,11 +1022,27 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 							} else {
 								if s.IsPTTing && currentLesson.ActiveTransmitters[s.Frequency] == state.UserID {
 									delete(currentLesson.ActiveTransmitters, s.Frequency)
-									// Save recording
+									// Move slow operations (save/STT) to goroutine
 									audioData := currentLesson.ActiveRecordings[state.UserID]
-									audioFile := currentLesson.saveAudio(state.UserID, audioData)
-									transcript := currentLesson.CurrentTranscripts[state.UserID]
-									currentLesson.logTransmission(state.UserID, s.Name, s.Callsign, s.Frequency, audioFile, transcript)
+									clientTranscript := currentLesson.CurrentTranscripts[state.UserID]
+									sName := s.Name
+									sCallsign := s.Callsign
+									sFreq := s.Frequency
+									uID := state.UserID
+
+									go func(l *Lesson, userID, name, callsign, freq, cTranscript string, data []byte) {
+										audioFile := l.saveAudio(userID, data)
+										serverTranscript := l.ProcessSTT(userID, data)
+
+										finalTranscript := cTranscript
+										if serverTranscript != "" {
+											finalTranscript = serverTranscript + " " + cTranscript
+										}
+										l.mu.Lock()
+										l.logTransmission(userID, name, callsign, freq, audioFile, finalTranscript)
+										l.mu.Unlock()
+									}(currentLesson, uID, sName, sCallsign, sFreq, clientTranscript, audioData)
+
 									delete(currentLesson.ActiveRecordings, state.UserID)
 									delete(currentLesson.CurrentTranscripts, state.UserID)
 								}
@@ -915,11 +1069,25 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 				if msg.IsPTTing {
 					// Start recording (binary will append)
 				} else {
-					// Stop and save
+					// Stop and save in goroutine
 					audioData := currentLesson.ActiveRecordings[state.UserID]
-					audioFile := currentLesson.saveAudio(state.UserID, audioData)
-					transcript := currentLesson.CurrentTranscripts[state.UserID]
-					currentLesson.logTransmission(state.UserID, msg.Name, "TUTOR", "GLOBAL", audioFile, transcript)
+					clientTranscript := currentLesson.CurrentTranscripts[state.UserID]
+					tName := msg.Name
+					uID := state.UserID
+
+					go func(l *Lesson, userID, name, cTranscript string, data []byte) {
+						audioFile := l.saveAudio(userID, data)
+						serverTranscript := l.ProcessSTT(userID, data)
+
+						finalTranscript := cTranscript
+						if serverTranscript != "" {
+							finalTranscript = serverTranscript + " " + cTranscript
+						}
+						l.mu.Lock()
+						l.logTransmission(userID, name, "TUTOR", "GLOBAL", audioFile, finalTranscript)
+						l.mu.Unlock()
+					}(currentLesson, uID, tName, clientTranscript, audioData)
+
 					delete(currentLesson.ActiveRecordings, state.UserID)
 					delete(currentLesson.CurrentTranscripts, state.UserID)
 				}
@@ -966,15 +1134,28 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 				for _, s := range currentLesson.Students {
 					s.Frequency = ""
 				}
-				// TTS Broadcast
-				ttsMsg := map[string]string{"type": "tts_broadcast", "message": "End of exercise. End of exercise. End of exercise."}
-				ttsData, _ := json.Marshal(ttsMsg)
-				for c, st := range currentLesson.conns {
+
+				// Capture connections for broadcast
+				var students []*ConnState
+				for _, st := range currentLesson.conns {
 					if !st.IsTutor {
-						c.WriteMessage(websocket.TextMessage, ttsData)
+						students = append(students, st)
 					}
 				}
 				currentLesson.mu.Unlock()
+
+				// Server-side TTS generation (outside lock)
+				go func(l *Lesson, targets []*ConnState) {
+					audio, err := l.GenerateTTS("End of exercise. End of exercise. End of exercise.")
+					if err == nil {
+						for _, st := range targets {
+							sendMessage(st, websocket.BinaryMessage, audio)
+						}
+					} else {
+						log.Printf("TTS Error: %v", err)
+					}
+				}(currentLesson, students)
+
 				broadcastUpdate(currentLesson)
 			}
 
@@ -991,7 +1172,7 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 
 				// Tell main tutor to download zip
 				if zipFile != "" {
-					conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"download_zip","url":"/admin/download?file=`+zipFile+`"}`))
+					sendMessage(state, websocket.TextMessage, []byte(`{"type":"download_zip","url":"/admin/download?file=`+zipFile+`"}`))
 				}
 				currentLesson.mu.Unlock()
 			}
@@ -1010,9 +1191,9 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 			if currentLesson != nil && state != nil && state.IsTutor {
 				currentLesson.mu.Lock()
 				targetID := msg.TargetID
-				for c, s := range currentLesson.conns {
+				for _, s := range currentLesson.conns {
 					if s.UserID == targetID {
-						c.WriteMessage(websocket.TextMessage, []byte(`{"type":"force_permission_request"}`))
+						sendMessage(s, websocket.TextMessage, []byte(`{"type":"force_permission_request"}`))
 						break
 					}
 				}
@@ -1044,9 +1225,9 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 					"text":      msg.Text,
 				}
 				data, _ := json.Marshal(msg)
-				for c, st := range currentLesson.conns {
+				for _, st := range currentLesson.conns {
 					if st.IsTutor {
-						c.WriteMessage(websocket.TextMessage, data)
+						sendMessage(st, websocket.TextMessage, data)
 					}
 				}
 				currentLesson.mu.Unlock()
@@ -1058,32 +1239,30 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 				targetID := msg.TargetID
 				newRole := msg.NewRole
 
-				// Find target connection
-				var targetConn *websocket.Conn
+				// Find target state
 				var targetState *ConnState
-				for c, s := range currentLesson.conns {
+				for _, s := range currentLesson.conns {
 					if s.UserID == targetID {
-						targetConn = c
 						targetState = s
 						break
 					}
 				}
 
-				if targetConn != nil {
+				if targetState != nil {
 					if newRole == "tutor" && !targetState.IsTutor {
 						// Elevate student to tutor
 						s := currentLesson.Students[targetID]
 						targetState.IsTutor = true
 						currentLesson.Tutors[targetID] = s.Name
 						delete(currentLesson.Students, targetID)
-						targetConn.WriteMessage(websocket.TextMessage, []byte(`{"type":"role_change","new_role":"tutor"}`))
+						sendMessage(targetState, websocket.TextMessage, []byte(`{"type":"role_change","new_role":"tutor"}`))
 					} else if newRole == "student" && targetState.IsTutor && !targetState.IsMainTutor {
 						// Demote tutor to student
 						name := currentLesson.Tutors[targetID]
 						targetState.IsTutor = false
 						delete(currentLesson.Tutors, targetID)
 						currentLesson.Students[targetID] = &Student{ID: targetID, Name: name}
-						targetConn.WriteMessage(websocket.TextMessage, []byte(`{"type":"role_change","new_role":"student"}`))
+						sendMessage(targetState, websocket.TextMessage, []byte(`{"type":"role_change","new_role":"student"}`))
 					}
 				}
 				currentLesson.mu.Unlock()
@@ -1093,16 +1272,18 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// forceLeaveAllStudents notifies all students in a lesson to disconnect and return to the home screen.
 func forceLeaveAllStudents(l *Lesson) {
 	msg := map[string]string{"type": "force_leave"}
 	data, _ := json.Marshal(msg)
-	for conn, state := range l.conns {
+	for _, state := range l.conns {
 		if state != nil && !state.IsTutor {
-			conn.WriteMessage(websocket.TextMessage, data)
+			sendMessage(state, websocket.TextMessage, data)
 		}
 	}
 }
 
+// logEvent records non-audio events like joins, role changes, and assignments.
 func (l *Lesson) logEvent(userID, name, callsign, freq, details string) {
 	l.Logs = append(l.Logs, LogEntry{
 		Timestamp: time.Now(),
@@ -1115,6 +1296,7 @@ func (l *Lesson) logEvent(userID, name, callsign, freq, details string) {
 	})
 }
 
+// saveAudio writes raw Int16 PCM audio data to a WAV file with a proper header.
 func (l *Lesson) saveAudio(userID string, data []byte) string {
 	if len(data) == 0 {
 		return ""
@@ -1139,12 +1321,12 @@ func (l *Lesson) saveAudio(userID string, data []byte) string {
 	binary.Write(f, binary.LittleEndian, []byte("WAVE"))
 	binary.Write(f, binary.LittleEndian, []byte("fmt "))
 	binary.Write(f, binary.LittleEndian, uint32(16))
-	binary.Write(f, binary.LittleEndian, uint16(3)) // IEEE Float
+	binary.Write(f, binary.LittleEndian, uint16(1)) // PCM
 	binary.Write(f, binary.LittleEndian, uint16(1)) // Mono
 	binary.Write(f, binary.LittleEndian, sampleRate)
-	binary.Write(f, binary.LittleEndian, sampleRate*4)
-	binary.Write(f, binary.LittleEndian, uint16(4))
-	binary.Write(f, binary.LittleEndian, uint16(32))
+	binary.Write(f, binary.LittleEndian, sampleRate*2)
+	binary.Write(f, binary.LittleEndian, uint16(2))
+	binary.Write(f, binary.LittleEndian, uint16(16))
 	binary.Write(f, binary.LittleEndian, []byte("data"))
 	binary.Write(f, binary.LittleEndian, uint32(len(data)))
 	f.Write(data)
@@ -1152,6 +1334,7 @@ func (l *Lesson) saveAudio(userID string, data []byte) string {
 	return fileName
 }
 
+// generateZip bundles lesson logs, audio recordings, and a visual timeline into a single ZIP archive.
 func (l *Lesson) generateZip() (string, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -1194,6 +1377,7 @@ func (l *Lesson) generateZip() (string, error) {
 	return zipName, nil
 }
 
+// logTransmission records a voice transmission event with metadata and references to saved audio.
 func (l *Lesson) logTransmission(userID, name, callsign, freq, audioFile, transcript string) {
 	l.Logs = append(l.Logs, LogEntry{
 		Timestamp:  time.Now(),
@@ -1207,6 +1391,7 @@ func (l *Lesson) logTransmission(userID, name, callsign, freq, audioFile, transc
 	})
 }
 
+// broadcastUpdate sends the current lesson state (students, frequencies, callsigns) to all connected clients.
 func broadcastUpdate(l *Lesson) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -1237,10 +1422,7 @@ func broadcastUpdate(l *Lesson) {
 
 	data, _ := json.Marshal(msg)
 
-	for conn := range l.conns {
-		err := conn.WriteMessage(websocket.TextMessage, data)
-		if err != nil {
-			continue
-		}
+	for _, s := range l.conns {
+		sendMessage(s, websocket.TextMessage, data)
 	}
 }

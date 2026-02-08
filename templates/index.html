@@ -37,6 +37,9 @@
                 <p style="margin-top: 1rem;"><a href="/admin">Admin Portal</a></p>
             </div>
         </div>
+        <footer class="app-footer">
+            <p>Version: {{.Version}} | <a href="{{.GithubURL}}" target="_blank">GitHub Project</a></p>
+        </footer>
     </div>
     <script>
         const urlParams = new URLSearchParams(window.location.search);
