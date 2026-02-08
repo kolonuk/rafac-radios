@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Student View - {{.Name}}</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body id="student-body">
+    <div class="student-container">
+        <h1>Welcome, <span id="student-name">{{.Name}}</span></h1>
+        <p>Lesson ID: <span id="lesson-id">{{.LessonID}}</span></p>
+
+        <div class="frequency-display">
+            Current Frequency: <span id="current-frequency">None</span>
+        </div>
+
+        <div class="ptt-container">
+            <button id="ptt-button">PUSH TO TALK (PTT)</button>
+            <p class="hint">Push and hold the button or Space bar</p>
+        </div>
+
+        <div class="permissions">
+            <button id="request-permissions-student">Allow Mic/Speaker</button>
+            <span id="permission-status-student"></span>
+        </div>
+
+        <a href="/" class="button leave-btn">Leave</a>
+    </div>
+
+    <script src="/static/app.js"></script>
+    <script>
+        initStudent("{{.LessonID}}", "{{.Name}}");
+    </script>
+</body>
+</html>

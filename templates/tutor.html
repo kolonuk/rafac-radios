@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tutor Dashboard - {{.LessonID}}</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="tutor-body">
+    <header>
+        <h1>Tutor Dashboard - Lesson: <span id="display-lesson-id">{{.LessonID}}</span></h1>
+        <div class="permissions">
+            <button id="request-permissions">Request Mic/Speaker Permissions</button>
+            <span id="permission-status"></span>
+        </div>
+    </header>
+
+    <main class="tutor-layout">
+        <section class="student-list-container">
+            <h2>Students</h2>
+            <ul id="student-list">
+                <!-- Students will appear here -->
+            </ul>
+        </section>
+
+        <section class="frequency-list-container">
+            <h2>Frequencies</h2>
+            <div id="frequency-list" class="frequency-grid">
+                <!-- Frequencies will appear here -->
+            </div>
+        </section>
+
+        <section class="actions-container">
+            <h2>Actions</h2>
+            <button id="create-freq-btn">Create Frequency</button>
+            <button id="clear-freqs-btn">Clear All Frequencies</button>
+            <a href="/" class="button">Leave Lesson</a>
+        </section>
+    </main>
+
+    <dialog id="freq-dialog">
+        <form method="dialog">
+            <h3>Create Frequency</h3>
+            <input type="text" id="new-freq-name" placeholder="Frequency name (e.g. 121.5 MHz)">
+            <div class="dialog-buttons">
+                <button value="cancel">Cancel</button>
+                <button id="confirm-freq" value="default">Create</button>
+            </div>
+        </form>
+    </dialog>
+
+    <script src="/static/app.js"></script>
+    <script>
+        initTutor("{{.LessonID}}", "{{.TutorID}}");
+    </script>
+</body>
+</html>
