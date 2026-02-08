@@ -23,16 +23,25 @@
             </ul>
         </section>
 
-        <section class="frequency-list-container">
-            <h2>Frequencies</h2>
-            <div id="frequency-list" class="frequency-grid">
-                <!-- Frequencies will appear here -->
+        <section class="freq-call-container">
+            <div class="frequency-list-container">
+                <h2>Frequencies</h2>
+                <div id="frequency-list" class="frequency-grid">
+                    <!-- Frequencies will appear here -->
+                </div>
+            </div>
+            <div class="callsign-list-container">
+                <h2>Callsigns</h2>
+                <div id="callsign-list" class="callsign-grid">
+                    <!-- Callsigns will appear here -->
+                </div>
             </div>
         </section>
 
         <section class="actions-container">
             <h2>Actions</h2>
             <button id="create-freq-btn">Create Frequency</button>
+            <button id="create-callsign-btn">Create Callsign</button>
             <button id="clear-freqs-btn">Clear All Frequencies</button>
             <a href="/" class="button">Leave Lesson</a>
         </section>
@@ -45,6 +54,17 @@
             <div class="dialog-buttons">
                 <button value="cancel">Cancel</button>
                 <button id="confirm-freq" value="default">Create</button>
+            </div>
+        </form>
+    </dialog>
+
+    <dialog id="callsign-dialog">
+        <form method="dialog">
+            <h3>Create Callsign</h3>
+            <input type="text" id="new-callsign-name" placeholder="Callsign (e.g. Red Alpha)">
+            <div class="dialog-buttons">
+                <button value="cancel">Cancel</button>
+                <button id="confirm-callsign" value="default">Create</button>
             </div>
         </form>
     </dialog>

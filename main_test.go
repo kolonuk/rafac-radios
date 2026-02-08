@@ -19,10 +19,11 @@ func TestGetOrCreateLesson(t *testing.T) {
 	}
 }
 
-func TestLessonStudents(t *testing.T) {
+func TestLessonStudentsAndCallsigns(t *testing.T) {
 	l := getOrCreateLesson("L2")
 	l.mu.Lock()
 	l.Students["s1"] = &Student{ID: "s1", Name: "Alice"}
+	l.Callsigns = append(l.Callsigns, "Alpha")
 	l.mu.Unlock()
 
 	l = getOrCreateLesson("L2")
@@ -32,6 +33,9 @@ func TestLessonStudents(t *testing.T) {
 	}
 	if l.Students["s1"].Name != "Alice" {
 		t.Errorf("Expected student name Alice, got %s", l.Students["s1"].Name)
+	}
+	if len(l.Callsigns) != 1 || l.Callsigns[0] != "Alpha" {
+		t.Error("Expected callsign Alpha")
 	}
 	l.mu.Unlock()
 }

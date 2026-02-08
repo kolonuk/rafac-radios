@@ -27,16 +27,24 @@ type Student struct {
 	ID        string `json:"id"`
 	Name      string `json:"name"`
 	Frequency string `json:"frequency"`
+	Callsign  string `json:"callsign"`
 	IsPTTing  bool   `json:"is_ptting"`
 }
 
+type ConnState struct {
+	StudentID string
+	IsTutor   bool
+}
+
 type Lesson struct {
-	ID          string              `json:"id"`
-	TutorID     string              `json:"tutor_id"`
-	Students    map[string]*Student `json:"students"`
-	Frequencies []string            `json:"frequencies"`
-	conns       map[*websocket.Conn]bool
-	mu          sync.Mutex
+	ID                 string              `json:"id"`
+	TutorID            string              `json:"tutor_id"`
+	Students           map[string]*Student `json:"students"`
+	Frequencies        []string            `json:"frequencies"`
+	Callsigns          []string            `json:"callsigns"`
+	ActiveTransmitters map[string]string   `json:"active_transmitters"` // freq -> studentID
+	conns              map[*websocket.Conn]*ConnState
+	mu                 sync.Mutex
 }
 
 var (
@@ -51,10 +59,12 @@ func getOrCreateLesson(id string) *Lesson {
 		return l
 	}
 	l := &Lesson{
-		ID:          id,
-		Students:    make(map[string]*Student),
-		Frequencies: []string{},
-		conns:       make(map[*websocket.Conn]bool),
+		ID:                 id,
+		Students:           make(map[string]*Student),
+		Frequencies:        []string{},
+		Callsigns:          []string{},
+		ActiveTransmitters: make(map[string]string),
+		conns:              make(map[*websocket.Conn]*ConnState),
 	}
 	lessons[id] = l
 	return l
@@ -115,14 +125,16 @@ func studentHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 type Message struct {
-	Type      string   `json:"type"`
-	LessonID  string   `json:"lesson_id,omitempty"`
-	StudentID string   `json:"student_id,omitempty"`
-	Name      string   `json:"name,omitempty"`
-	Frequency string   `json:"frequency,omitempty"`
-	Frequencies []string `json:"frequencies,omitempty"`
-	IsPTTing  bool     `json:"is_ptting,omitempty"`
-	Students  []*Student `json:"students,omitempty"`
+	Type        string     `json:"type"`
+	LessonID    string     `json:"lesson_id,omitempty"`
+	StudentID   string     `json:"student_id,omitempty"`
+	Name        string     `json:"name,omitempty"`
+	Frequency   string     `json:"frequency,omitempty"`
+	Frequencies []string   `json:"frequencies,omitempty"`
+	Callsign    string     `json:"callsign,omitempty"`
+	Callsigns   []string   `json:"callsigns,omitempty"`
+	IsPTTing    bool       `json:"is_ptting,omitempty"`
+	Students    []*Student `json:"students,omitempty"`
 }
 
 func wsHandler(w http.ResponseWriter, r *http.Request) {
@@ -137,18 +149,67 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 	var currentLesson *Lesson
 
 	for {
-		_, msgData, err := conn.ReadMessage()
+		msgType, msgData, err := conn.ReadMessage()
 		if err != nil {
 			if currentLesson != nil {
 				currentLesson.mu.Lock()
 				delete(currentLesson.conns, conn)
 				if currentStudentID != "" {
+					s, ok := currentLesson.Students[currentStudentID]
+					if ok && s.IsPTTing && s.Frequency != "" {
+						if currentLesson.ActiveTransmitters[s.Frequency] == currentStudentID {
+							delete(currentLesson.ActiveTransmitters, s.Frequency)
+						}
+					}
 					delete(currentLesson.Students, currentStudentID)
 				}
 				currentLesson.mu.Unlock()
 				broadcastUpdate(currentLesson)
 			}
 			break
+		}
+
+		if msgType == websocket.BinaryMessage {
+			if currentLesson != nil && currentStudentID != "" {
+				currentLesson.mu.Lock()
+				student, ok := currentLesson.Students[currentStudentID]
+				if ok && student.IsPTTing && student.Frequency != "" {
+					if currentLesson.ActiveTransmitters[student.Frequency] == currentStudentID {
+						// Prepend sender ID and frequency info to the binary message
+						// This helps the receiver filter audio
+						// For simplicity, let's just use a JSON-like header or fixed size header
+						// Actually, since we know the frequency of each connection, we can just route it.
+
+						for otherConn, state := range currentLesson.conns {
+							if otherConn == conn {
+								continue
+							}
+							if state.IsTutor {
+								// Tutors get all audio, but they need to know which student it is from
+								// Let's prepend the student ID (fixed 16 bytes?)
+								// Or just send another message.
+								// Let's just send raw audio for now and let tutor hear "everything" if listening.
+								// Requirement: "tutor listen in to the frequency... or student"
+								// So tutor needs to know which student/freq the audio is from.
+
+								// We'll prepend StudentID followed by Frequency name, null-terminated.
+								header := fmt.Sprintf("%s|%s|", student.ID, student.Frequency)
+								headerBytes := []byte(header)
+								fullMsg := append(headerBytes, msgData...)
+								otherConn.WriteMessage(websocket.BinaryMessage, fullMsg)
+							} else {
+								otherStudent := currentLesson.Students[state.StudentID]
+								if otherStudent != nil && otherStudent.Frequency == student.Frequency {
+									// Students only get raw audio from their own frequency
+									otherConn.WriteMessage(websocket.BinaryMessage, msgData)
+								}
+							}
+						}
+					}
+				}
+				currentLesson.mu.Unlock()
+			}
+			continue
 		}
 
 		var msg Message
@@ -161,14 +222,16 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 			l := getOrCreateLesson(msg.LessonID)
 			currentLesson = l
 			l.mu.Lock()
-			l.conns[conn] = true
+			state := &ConnState{IsTutor: msg.StudentID == ""}
 			if msg.StudentID != "" {
 				currentStudentID = msg.StudentID
+				state.StudentID = currentStudentID
 				l.Students[currentStudentID] = &Student{
 					ID:   msg.StudentID,
 					Name: msg.Name,
 				}
 			}
+			l.conns[conn] = state
 			l.mu.Unlock()
 			broadcastUpdate(l)
 
@@ -184,6 +247,9 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 			if currentLesson != nil {
 				currentLesson.mu.Lock()
 				if s, ok := currentLesson.Students[msg.StudentID]; ok {
+					if s.IsPTTing && s.Frequency != "" && currentLesson.ActiveTransmitters[s.Frequency] == s.ID {
+						delete(currentLesson.ActiveTransmitters, s.Frequency)
+					}
 					s.Frequency = msg.Frequency
 				}
 				currentLesson.mu.Unlock()
@@ -193,8 +259,27 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 		case "clear_frequencies":
 			if currentLesson != nil {
 				currentLesson.mu.Lock()
+				currentLesson.ActiveTransmitters = make(map[string]string)
 				for _, s := range currentLesson.Students {
 					s.Frequency = ""
+				}
+				currentLesson.mu.Unlock()
+				broadcastUpdate(currentLesson)
+			}
+
+		case "add_callsign":
+			if currentLesson != nil {
+				currentLesson.mu.Lock()
+				currentLesson.Callsigns = append(currentLesson.Callsigns, msg.Callsign)
+				currentLesson.mu.Unlock()
+				broadcastUpdate(currentLesson)
+			}
+
+		case "assign_callsign":
+			if currentLesson != nil {
+				currentLesson.mu.Lock()
+				if s, ok := currentLesson.Students[msg.StudentID]; ok {
+					s.Callsign = msg.Callsign
 				}
 				currentLesson.mu.Unlock()
 				broadcastUpdate(currentLesson)
@@ -204,7 +289,21 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 			if currentLesson != nil && currentStudentID != "" {
 				currentLesson.mu.Lock()
 				if s, ok := currentLesson.Students[currentStudentID]; ok {
-					s.IsPTTing = msg.IsPTTing
+					if msg.IsPTTing {
+						if s.Frequency != "" {
+							if _, busy := currentLesson.ActiveTransmitters[s.Frequency]; !busy {
+								currentLesson.ActiveTransmitters[s.Frequency] = currentStudentID
+								s.IsPTTing = true
+							} else {
+								s.IsPTTing = false
+							}
+						}
+					} else {
+						if s.IsPTTing && s.Frequency != "" && currentLesson.ActiveTransmitters[s.Frequency] == currentStudentID {
+							delete(currentLesson.ActiveTransmitters, s.Frequency)
+						}
+						s.IsPTTing = false
+					}
 				}
 				currentLesson.mu.Unlock()
 				broadcastUpdate(currentLesson)
@@ -226,6 +325,7 @@ func broadcastUpdate(l *Lesson) {
 		Type:        "update",
 		LessonID:    l.ID,
 		Frequencies: l.Frequencies,
+		Callsigns:   l.Callsigns,
 		Students:    students,
 	}
 
@@ -234,7 +334,6 @@ func broadcastUpdate(l *Lesson) {
 	for conn := range l.conns {
 		err := conn.WriteMessage(websocket.TextMessage, data)
 		if err != nil {
-			// Connection likely closed, will be handled in its own read loop
 			continue
 		}
 	}

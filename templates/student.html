@@ -11,8 +11,19 @@
         <h1>Welcome, <span id="student-name">{{.Name}}</span></h1>
         <p>Lesson ID: <span id="lesson-id">{{.LessonID}}</span></p>
 
+        <div class="callsign-display">
+            Your Callsign: <span id="current-callsign">None</span>
+        </div>
+
         <div class="frequency-display">
             Current Frequency: <span id="current-frequency">None</span>
+        </div>
+
+        <div class="others-list">
+            <strong>Others on this frequency:</strong>
+            <ul id="others-on-freq">
+                <!-- Others will appear here -->
+            </ul>
         </div>
 
         <div class="ptt-container">

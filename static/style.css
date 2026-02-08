@@ -97,12 +97,23 @@ button:hover, .button:hover {
     height: calc(100vh - 100px);
 }
 
-.student-list-container, .frequency-list-container, .actions-container {
+.freq-call-container {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    height: 100%;
+}
+
+.student-list-container, .frequency-list-container, .callsign-list-container, .actions-container {
     border: 1px solid var(--border-color);
     padding: 1rem;
     background: var(--card-bg);
     border-radius: 8px;
     overflow-y: auto;
+}
+
+.frequency-list-container, .callsign-list-container {
+    flex: 1;
 }
 
 header {
@@ -113,19 +124,24 @@ header {
     border-bottom: 1px solid var(--border-color);
 }
 
-.frequency-grid {
+.frequency-grid, .callsign-grid {
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
 }
 
-.frequency-item {
+.frequency-item, .callsign-item {
     background: var(--secondary-color);
     padding: 1rem;
     border-radius: 4px;
     color: white;
     text-align: center;
     cursor: move;
+    user-select: none;
+}
+
+.frequency-item.transmitting-freq {
+    background-color: var(--error-color) !important;
 }
 
 .student-item {
@@ -135,11 +151,20 @@ header {
     border-radius: 4px;
     display: flex;
     justify-content: space-between;
+    align-items: center;
+    cursor: move;
+    user-select: none;
 }
 
 .student-item.ptt-active {
     border-color: var(--error-color);
     box-shadow: 0 0 5px var(--error-color);
+    background-color: rgba(220, 53, 69, 0.1);
+}
+
+.student-item.ptt-active span:first-child {
+    color: var(--error-color);
+    font-weight: bold;
 }
 
 .student-item.receiving-active {
@@ -158,12 +183,28 @@ header {
     box-shadow: 0 4px 6px rgba(0,0,0,0.1);
 }
 
-.frequency-display {
-    font-size: 1.5rem;
-    margin: 2rem 0;
-    padding: 1rem;
+.frequency-display, .callsign-display {
+    font-size: 1.2rem;
+    margin: 1rem 0;
+    padding: 0.5rem;
     border: 2px dashed var(--primary-color);
     border-radius: 8px;
+}
+
+.others-list {
+    margin-top: 1rem;
+    text-align: left;
+    font-size: 0.9rem;
+}
+
+.others-list ul {
+    list-style: none;
+    padding: 0;
+}
+
+.others-list li {
+    padding: 0.2rem 0;
+    border-bottom: 1px solid var(--border-color);
 }
 
 .ptt-container {
@@ -234,4 +275,8 @@ dialog {
     border: 2px dashed var(--primary-color);
     padding: 10px;
     min-height: 50px;
+}
+
+.listening {
+    outline: 3px solid var(--success-color);
 }
