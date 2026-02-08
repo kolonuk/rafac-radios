@@ -5,16 +5,19 @@ import (
 	"fmt"
 	"html/template"
 	"log"
+	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
 
 var (
-	tutorIDEnv = os.Getenv("TUTOR_ID")
-	upgrader   = websocket.Upgrader{
+	systemCodeEnv = os.Getenv("SYSTEM_CODE")
+	upgrader      = websocket.Upgrader{
 		ReadBufferSize:  1024,
 		WriteBufferSize: 1024,
 		CheckOrigin: func(r *http.Request) bool {
@@ -26,10 +29,111 @@ var (
 type LessonType string
 
 const (
-	LessonFixed          LessonType = "fixed"           // Students change nothing
-	LessonRestrictedFreq LessonType = "restricted-freq" // Students choose from set freqs, can change callsign
-	LessonOpen           LessonType = "open"            // Students can create/join any freq
+	LessonFixed          LessonType = "fixed"
+	LessonRestrictedFreq LessonType = "restricted-freq"
+	LessonOpen           LessonType = "open"
 )
+
+type BlockType string
+
+const (
+	BlockNone BlockType = ""
+	BlockTemp BlockType = "temporary"
+	BlockPerm BlockType = "permanent"
+)
+
+type IPStats struct {
+	Attempts       int       `json:"attempts"`
+	RecentFailures []time.Time `json:"-"`
+	BlockStatus    BlockType `json:"block_status"`
+	LastAttempt    time.Time `json:"last_attempt"`
+}
+
+type SecurityManager struct {
+	Stats map[string]*IPStats
+	mu    sync.Mutex
+}
+
+var sm = &SecurityManager{
+	Stats: make(map[string]*IPStats),
+}
+
+func (s *SecurityManager) RecordAttempt(ip string, success bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	stats, ok := s.Stats[ip]
+	if !ok {
+		stats = &IPStats{}
+		s.Stats[ip] = stats
+	}
+
+	stats.LastAttempt = time.Now()
+	if success {
+		return
+	}
+
+	stats.Attempts++
+	stats.RecentFailures = append(stats.RecentFailures, time.Now())
+
+	now := time.Now()
+	var recent []time.Time
+	for _, t := range stats.RecentFailures {
+		if now.Sub(t) < time.Minute {
+			recent = append(recent, t)
+		}
+	}
+	stats.RecentFailures = recent
+
+	if stats.BlockStatus == BlockPerm {
+		return
+	}
+
+	if stats.Attempts >= 20 {
+		stats.BlockStatus = BlockPerm
+	} else if len(stats.RecentFailures) >= 5 {
+		stats.BlockStatus = BlockTemp
+	}
+}
+
+func (s *SecurityManager) IsBlocked(ip string) (bool, string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	stats, ok := s.Stats[ip]
+	if !ok {
+		return false, ""
+	}
+
+	if stats.BlockStatus == BlockPerm {
+		return true, "Your IP has been permanently blocked due to repeated failed attempts."
+	}
+
+	if stats.BlockStatus == BlockTemp {
+		if time.Since(stats.LastAttempt) < time.Minute {
+			return true, "Your IP is temporarily blocked. Please try again in a minute."
+		}
+		stats.BlockStatus = BlockNone
+	}
+
+	return false, ""
+}
+
+func getIP(r *http.Request) string {
+	ip, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return ip
+}
+
+func isAdmin(r *http.Request) bool {
+	cookie, err := r.Cookie("admin_access")
+	if err != nil {
+		return false
+	}
+	return cookie.Value == systemCodeEnv
+}
 
 type Student struct {
 	ID        string `json:"id"`
@@ -53,10 +157,11 @@ type CallsignRequest struct {
 type Lesson struct {
 	ID                 string              `json:"id"`
 	TutorID            string              `json:"tutor_id"`
+	TutorName          string              `json:"tutor_name"`
 	Students           map[string]*Student `json:"students"`
 	Frequencies        []string            `json:"frequencies"`
 	Callsigns          []string            `json:"callsigns"`
-	ActiveTransmitters map[string]string   `json:"active_transmitters"` // freq -> studentID
+	ActiveTransmitters map[string]string   `json:"active_transmitters"`
 	conns              map[*websocket.Conn]*ConnState
 	IsActive           bool                `json:"is_active"`
 	Type               LessonType          `json:"type"`
@@ -80,7 +185,7 @@ func getLesson(id string) *Lesson {
 	return l
 }
 
-func createLesson(id string, tutorID string) *Lesson {
+func createLesson(id string, tutorID string, tutorName string) *Lesson {
 	lessonsMu.Lock()
 	defer lessonsMu.Unlock()
 	l, ok := lessons[id]
@@ -97,24 +202,30 @@ func createLesson(id string, tutorID string) *Lesson {
 		lessons[id] = l
 	}
 	l.TutorID = tutorID
+	l.TutorName = tutorName
 	l.IsActive = true
 	return l
 }
 
 func main() {
-	if tutorIDEnv == "" {
-		tutorIDEnv = "admin" // Default if not set
+	if systemCodeEnv == "" {
+		systemCodeEnv = "admin"
 	}
 
 	http.HandleFunc("/", landingHandler)
 	http.HandleFunc("/tutor", tutorHandler)
 	http.HandleFunc("/student", studentHandler)
+	http.HandleFunc("/admin", adminHandler)
+	http.HandleFunc("/admin/unblock", unblockHandler)
+	http.HandleFunc("/admin/block", manualBlockHandler)
+	http.HandleFunc("/admin/toggle-perm", togglePermHandler)
+	http.HandleFunc("/run-tests", runTestsHandler)
 	http.HandleFunc("/ws", wsHandler)
 
 	fs := http.FileServer(http.Dir("static"))
 	http.Handle("/static/", http.StripPrefix("/static/", fs))
 
-	fmt.Printf("Server starting on :8080 with TUTOR_ID=%s\n", tutorIDEnv)
+	fmt.Printf("Server starting on :8080 with SYSTEM_CODE set\n")
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }
 
@@ -124,25 +235,48 @@ func landingHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func tutorHandler(w http.ResponseWriter, r *http.Request) {
-	tID := r.URL.Query().Get("tutorID")
+	ip := getIP(r)
+	if blocked, msg := sm.IsBlocked(ip); blocked {
+		http.Redirect(w, r, "/?error="+template.URLQueryEscaper(msg), http.StatusFound)
+		return
+	}
+
+	tID := r.URL.Query().Get("systemCode")
+	tName := r.URL.Query().Get("tutorName")
 	lID := r.URL.Query().Get("lessonID")
 
-	if tID != tutorIDEnv {
-		http.Redirect(w, r, "/?error=Invalid Tutor ID", http.StatusFound)
+	if tID != systemCodeEnv {
+		sm.RecordAttempt(ip, false)
+		http.Redirect(w, r, "/?error=Invalid System Code", http.StatusFound)
 		return
 	}
-	if lID == "" {
-		http.Redirect(w, r, "/?error=Missing Lesson ID", http.StatusFound)
+	if lID == "" || tName == "" {
+		http.Redirect(w, r, "/?error=Missing Lesson ID or Tutor Name", http.StatusFound)
 		return
 	}
 
-	createLesson(lID, tID)
+	sm.RecordAttempt(ip, true)
+
+	// Set admin access cookie
+	http.SetCookie(w, &http.Cookie{
+		Name:  "admin_access",
+		Value: tID,
+		Path:  "/",
+	})
+
+	createLesson(lID, tID, tName)
 
 	tmpl := template.Must(template.ParseFiles("templates/tutor.html"))
-	tmpl.Execute(w, map[string]string{"LessonID": lID, "TutorID": tID})
+	tmpl.Execute(w, map[string]string{"LessonID": lID, "TutorName": tName, "SystemCode": tID})
 }
 
 func studentHandler(w http.ResponseWriter, r *http.Request) {
+	ip := getIP(r)
+	if blocked, msg := sm.IsBlocked(ip); blocked {
+		http.Redirect(w, r, "/?error="+template.URLQueryEscaper(msg), http.StatusFound)
+		return
+	}
+
 	name := r.URL.Query().Get("name")
 	lID := r.URL.Query().Get("lessonID")
 
@@ -153,12 +287,124 @@ func studentHandler(w http.ResponseWriter, r *http.Request) {
 
 	l := getLesson(lID)
 	if l == nil {
+		sm.RecordAttempt(ip, false)
 		http.Redirect(w, r, "/?error=Lesson not found or not active. Tutor must start the lesson first.", http.StatusFound)
 		return
 	}
 
+	sm.RecordAttempt(ip, true)
 	tmpl := template.Must(template.ParseFiles("templates/student.html"))
-	tmpl.Execute(w, map[string]string{"Name": name, "LessonID": lID})
+	tmpl.Execute(w, map[string]string{"Name": name, "LessonID": lID, "TutorName": l.TutorName})
+}
+
+func adminHandler(w http.ResponseWriter, r *http.Request) {
+	if !isAdmin(r) {
+		http.Redirect(w, r, "/?error=Unauthorized Admin Access", http.StatusFound)
+		return
+	}
+
+	lessonsMu.Lock()
+	activeLessons := []map[string]interface{}{}
+	for _, l := range lessons {
+		if l.IsActive {
+			activeLessons = append(activeLessons, map[string]interface{}{
+				"ID":           l.ID,
+				"TutorName":    l.TutorName,
+				"StudentCount": len(l.Students),
+				"Type":         l.Type,
+			})
+		}
+	}
+	lessonsMu.Unlock()
+
+	sm.mu.Lock()
+	blockedIPs := []map[string]interface{}{}
+	for ip, stats := range sm.Stats {
+		if stats.BlockStatus != BlockNone || stats.Attempts > 0 {
+			blockedIPs = append(blockedIPs, map[string]interface{}{
+				"IP":          ip,
+				"Attempts":    stats.Attempts,
+				"BlockStatus": stats.BlockStatus,
+				"LastAttempt": stats.LastAttempt.Format(time.RFC3339),
+			})
+		}
+	}
+	sm.mu.Unlock()
+
+	data := map[string]interface{}{
+		"Lessons":    activeLessons,
+		"BlockedIPs": blockedIPs,
+	}
+
+	tmpl := template.Must(template.ParseFiles("templates/admin.html"))
+	tmpl.Execute(w, data)
+}
+
+func unblockHandler(w http.ResponseWriter, r *http.Request) {
+	if !isAdmin(r) {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	ip := r.URL.Query().Get("ip")
+	if ip != "" {
+		sm.mu.Lock()
+		if stats, ok := sm.Stats[ip]; ok {
+			stats.BlockStatus = BlockNone
+			stats.Attempts = 0
+			stats.RecentFailures = nil
+		}
+		sm.mu.Unlock()
+	}
+	http.Redirect(w, r, "/admin", http.StatusFound)
+}
+
+func manualBlockHandler(w http.ResponseWriter, r *http.Request) {
+	if !isAdmin(r) {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	ip := r.URL.Query().Get("ip")
+	if ip != "" {
+		sm.mu.Lock()
+		stats, ok := sm.Stats[ip]
+		if !ok {
+			stats = &IPStats{}
+			sm.Stats[ip] = stats
+		}
+		stats.BlockStatus = BlockPerm
+		sm.mu.Unlock()
+	}
+	http.Redirect(w, r, "/admin", http.StatusFound)
+}
+
+func togglePermHandler(w http.ResponseWriter, r *http.Request) {
+	if !isAdmin(r) {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	ip := r.URL.Query().Get("ip")
+	if ip != "" {
+		sm.mu.Lock()
+		if stats, ok := sm.Stats[ip]; ok {
+			if stats.BlockStatus == BlockTemp {
+				stats.BlockStatus = BlockPerm
+			} else if stats.BlockStatus == BlockPerm {
+				stats.BlockStatus = BlockTemp
+			}
+		}
+		sm.mu.Unlock()
+	}
+	http.Redirect(w, r, "/admin", http.StatusFound)
+}
+
+func runTestsHandler(w http.ResponseWriter, r *http.Request) {
+	if !isAdmin(r) {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	out, _ := exec.Command("go", "test", "-v", ".").CombinedOutput()
+	w.Header().Set("Content-Type", "text/plain")
+	w.Write(out)
 }
 
 type Message struct {
@@ -176,6 +422,7 @@ type Message struct {
 	CallsignVerify   bool              `json:"callsign_verify,omitempty"`
 	PendingCallsigns []CallsignRequest `json:"pending_callsigns,omitempty"`
 	Message          string            `json:"message,omitempty"`
+	TutorName        string            `json:"tutor_name,omitempty"`
 }
 
 func wsHandler(w http.ResponseWriter, r *http.Request) {
@@ -219,7 +466,6 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 			if currentLesson != nil && currentStudentID != "" {
 				currentLesson.mu.Lock()
 				student, ok := currentLesson.Students[currentStudentID]
-				// Requirement: make sure a student can't transmit or receive if they do not have a freq or call sign
 				if ok && student.IsPTTing && student.Frequency != "" && student.Callsign != "" {
 					if currentLesson.ActiveTransmitters[student.Frequency] == currentStudentID {
 						for otherConn, state := range currentLesson.conns {
@@ -253,23 +499,11 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 		switch msg.Type {
 		case "join":
 			l := getLesson(msg.LessonID)
-			if msg.StudentID == "" { // Tutor
+			if msg.StudentID == "" {
 				isTutor = true
 				lessonsMu.Lock()
 				l = lessons[msg.LessonID]
-				if l == nil {
-					l = &Lesson{
-						ID:                 msg.LessonID,
-						Students:           make(map[string]*Student),
-						Frequencies:        []string{},
-						Callsigns:          []string{},
-						ActiveTransmitters: make(map[string]string),
-						conns:              make(map[*websocket.Conn]*ConnState),
-						IsActive:           true,
-						Type:               LessonFixed,
-					}
-					lessons[msg.LessonID] = l
-				} else {
+				if l != nil {
 					l.IsActive = true
 				}
 				lessonsMu.Unlock()
@@ -306,7 +540,6 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 		case "add_frequency":
 			if currentLesson != nil {
 				currentLesson.mu.Lock()
-				// Students can only add if LessonOpen
 				if isTutor || currentLesson.Type == LessonOpen {
 					currentLesson.Frequencies = append(currentLesson.Frequencies, msg.Frequency)
 				}
@@ -363,12 +596,10 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 				canAssign := isTutor
 				if !isTutor {
 					if currentLesson.Type == LessonOpen || currentLesson.Type == LessonRestrictedFreq {
-						// Only if verified or verification disabled
 						if !currentLesson.CallsignVerify {
 							canAssign = true
 							msg.StudentID = currentStudentID
 						} else {
-							// Add to pending
 							currentLesson.PendingCallsigns = append(currentLesson.PendingCallsigns, CallsignRequest{
 								StudentID:   currentStudentID,
 								StudentName: currentLesson.Students[currentStudentID].Name,
@@ -379,7 +610,6 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 				}
 
 				if canAssign {
-					// Check for uniqueness
 					unique := true
 					for _, s := range currentLesson.Students {
 						if s.Callsign == msg.Callsign && s.ID != msg.StudentID {
@@ -402,7 +632,6 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 		case "approve_callsign":
 			if currentLesson != nil && isTutor {
 				currentLesson.mu.Lock()
-				// Find and remove from pending
 				var req CallsignRequest
 				found := false
 				for i, r := range currentLesson.PendingCallsigns {
@@ -414,7 +643,6 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 				if found {
-					// Check uniqueness
 					unique := true
 					for _, s := range currentLesson.Students {
 						if s.Callsign == req.NewCallsign {
@@ -470,7 +698,6 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 			if currentLesson != nil && currentStudentID != "" {
 				currentLesson.mu.Lock()
 				if s, ok := currentLesson.Students[currentStudentID]; ok {
-					// Requirement: must have both freq and callsign to transmit
 					if s.Frequency != "" && s.Callsign != "" {
 						if msg.IsPTTing {
 							if _, busy := currentLesson.ActiveTransmitters[s.Frequency]; !busy {
@@ -576,6 +803,7 @@ func broadcastUpdate(l *Lesson) {
 		LessonType:       l.Type,
 		CallsignVerify:   l.CallsignVerify,
 		PendingCallsigns: l.PendingCallsigns,
+		TutorName:        l.TutorName,
 	}
 
 	data, _ := json.Marshal(msg)

@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Portal - Radio Teaching App</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container" style="max-width: 1200px;">
+        <h1>Admin Portal</h1>
+        <p><a href="/" class="button">Back to Home</a></p>
+
+        <div class="admin-layout" style="display: grid; grid-template-columns: 1fr 1fr; gap: 2rem;">
+            <section class="admin-section">
+                <h2>Active Lessons</h2>
+                <table style="width: 100%; border-collapse: collapse; margin-top: 1rem;">
+                    <thead>
+                        <tr style="border-bottom: 2px solid var(--border-color);">
+                            <th style="padding: 0.5rem; text-align: left;">Lesson ID</th>
+                            <th style="padding: 0.5rem; text-align: left;">Tutor Name</th>
+                            <th style="padding: 0.5rem; text-align: left;">Students</th>
+                            <th style="padding: 0.5rem; text-align: left;">Type</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {{range .Lessons}}
+                        <tr style="border-bottom: 1px solid var(--border-color);">
+                            <td style="padding: 0.5rem;">{{.ID}}</td>
+                            <td style="padding: 0.5rem;">{{.TutorName}}</td>
+                            <td style="padding: 0.5rem;">{{.StudentCount}}</td>
+                            <td style="padding: 0.5rem;">{{.Type}}</td>
+                        </tr>
+                        {{else}}
+                        <tr>
+                            <td colspan="4" style="padding: 1rem; text-align: center;">No active lessons.</td>
+                        </tr>
+                        {{end}}
+                    </tbody>
+                </table>
+            </section>
+
+            <section class="admin-section">
+                <h2>Security & Blocking</h2>
+                <div style="margin-bottom: 1rem;">
+                    <input type="text" id="manual-ip" placeholder="IP Address">
+                    <button class="mini-btn danger" onclick="manualBlock()">Perm Block IP</button>
+                </div>
+                <table style="width: 100%; border-collapse: collapse;">
+                    <thead>
+                        <tr style="border-bottom: 2px solid var(--border-color);">
+                            <th style="padding: 0.5rem; text-align: left;">IP</th>
+                            <th style="padding: 0.5rem; text-align: left;">Failures</th>
+                            <th style="padding: 0.5rem; text-align: left;">Status</th>
+                            <th style="padding: 0.5rem; text-align: left;">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {{range .BlockedIPs}}
+                        <tr style="border-bottom: 1px solid var(--border-color);">
+                            <td style="padding: 0.5rem;">{{.IP}}</td>
+                            <td style="padding: 0.5rem;">{{.Attempts}}</td>
+                            <td style="padding: 0.5rem;"><strong>{{.BlockStatus}}</strong></td>
+                            <td style="padding: 0.5rem;">
+                                <div style="display: flex; gap: 0.2rem; flex-wrap: wrap;">
+                                    <a href="/admin/unblock?ip={{.IP}}" class="button mini-btn">Unblock</a>
+                                    <a href="/admin/toggle-perm?ip={{.IP}}" class="button mini-btn warning">Toggle Perm</a>
+                                </div>
+                            </td>
+                        </tr>
+                        {{else}}
+                        <tr>
+                            <td colspan="4" style="padding: 1rem; text-align: center;">No blocks or recorded failures.</td>
+                        </tr>
+                        {{end}}
+                    </tbody>
+                </table>
+            </section>
+        </div>
+
+        <section class="admin-section" style="margin-top: 2rem;">
+            <h2>System Tests</h2>
+            <button id="run-tests-btn">Run Go Tests</button>
+            <pre id="test-output" style="background: #000; color: #0f0; padding: 1rem; margin-top: 1rem; border-radius: 4px; overflow-x: auto; min-height: 100px; text-align: left;"></pre>
+        </section>
+    </div>
+
+    <script>
+        document.getElementById('run-tests-btn').onclick = async () => {
+            const out = document.getElementById('test-output');
+            out.textContent = "Running tests...";
+            try {
+                const resp = await fetch('/run-tests');
+                const text = await resp.text();
+                out.textContent = text;
+            } catch (err) {
+                out.textContent = "Error running tests: " + err;
+            }
+        };
+
+        function manualBlock() {
+            const ip = document.getElementById('manual-ip').value;
+            if (ip) {
+                window.location.href = '/admin/block?ip=' + encodeURIComponent(ip);
+            }
+        }
+    </script>
+</body>
+</html>

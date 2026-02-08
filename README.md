@@ -17,6 +17,9 @@ A virtual radio training application designed for tutors to conduct simulated ra
     - **Callsign & Frequency Choice**: Depending on the lesson type, students can change their own frequency or request a callsign change.
     - **Presence**: See others currently on the same frequency.
 - **Realistic Audio**: Integrated Web Audio API filters (bandpass 300Hz-3kHz) and normalization to simulate radio quality.
+- **Admin Portal**:
+    - List all running lessons, tutor names, and student counts.
+    - Run system tests directly from the browser.
 
 ## Getting Started
 
@@ -33,13 +36,14 @@ A virtual radio training application designed for tutors to conduct simulated ra
 
 2. Run the container:
    ```bash
-   docker run -p 8080:8080 -e TUTOR_ID=your_secret_id rafac-radios
+   docker run -p 8080:8080 -e SYSTEM_CODE=your_secret_code rafac-radios
    ```
 
 3. Access the app:
     - Open `http://localhost:8080` in your browser.
-    - **Tutor**: Enter the `TUTOR_ID` set in the environment variable and a unique `Lesson ID`.
+    - **Tutor**: Enter the `SYSTEM_CODE` set in the environment variable, your name, and a unique `Lesson ID`.
     - **Student**: Enter your name and the `Lesson ID` provided by the tutor.
+    - **Admin**: Access `http://localhost:8080/admin`.
 
 ## Lesson Types
 
@@ -54,3 +58,4 @@ A virtual radio training application designed for tutors to conduct simulated ra
 - **Audio**: Web Audio API for capture, processing, and playback.
 - **Exclusivity**: Only one transmitter is allowed per frequency at a time (first-come, first-served).
 - **Security**: Students must have both a Frequency and a unique Callsign assigned to transmit or receive audio.
+- **Isolation**: Each lesson is strictly isolated. Actions in one lesson do not affect others.

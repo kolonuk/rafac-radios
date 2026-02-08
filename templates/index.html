@@ -26,12 +26,15 @@
             <div class="form-box">
                 <h2>Tutor Login</h2>
                 <form action="/tutor" method="get">
-                    <label for="tutorID">Tutor ID:</label>
-                    <input type="password" id="tutorID" name="tutorID" required>
+                    <label for="systemCode">System Code:</label>
+                    <input type="password" id="systemCode" name="systemCode" required>
+                    <label for="tutorName">Tutor Name:</label>
+                    <input type="text" id="tutorName" name="tutorName" required>
                     <label for="lessonID_tutor">Lesson ID:</label>
                     <input type="text" id="lessonID_tutor" name="lessonID" required>
                     <button type="submit">Continue</button>
                 </form>
+                <p style="margin-top: 1rem;"><a href="/admin">Admin Portal</a></p>
             </div>
         </div>
     </div>

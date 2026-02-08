@@ -7,6 +7,7 @@ let frequencies = [];
 let callsigns = [];
 let students = [];
 let lessonType = 'fixed';
+let tutorName = '';
 let callsignVerify = false;
 let pendingCallsigns = [];
 
@@ -42,6 +43,7 @@ function initWS() {
                 callsigns = msg.callsigns || [];
                 students = msg.students || [];
                 lessonType = msg.lesson_type;
+                tutorName = msg.tutor_name;
                 callsignVerify = msg.callsign_verify;
                 pendingCallsigns = msg.pending_callsigns || [];
                 updateUI();
@@ -516,6 +518,9 @@ function updateTutorUI() {
 function updateStudentUI() {
     const me = students.find(s => s.id === currentStudentID);
     if (!me) return;
+
+    const tutorDisp = document.getElementById('tutor-name-display');
+    if (tutorDisp && tutorName) tutorDisp.textContent = tutorName;
 
     const freqDisp = document.getElementById('current-frequency');
     freqDisp.textContent = me.frequency || "None (Cleared)";

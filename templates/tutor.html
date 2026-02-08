@@ -8,7 +8,10 @@
 </head>
 <body class="tutor-body">
     <header>
-        <h1>Tutor Dashboard - Lesson: <span id="display-lesson-id">{{.LessonID}}</span></h1>
+        <div>
+            <h1>Tutor Dashboard</h1>
+            <p>Lesson: <strong>{{.LessonID}}</strong> | Tutor: <strong>{{.TutorName}}</strong></p>
+        </div>
         <div class="header-controls">
             <div class="settings-group">
                 <label for="lesson-type">Lesson Type:</label>
@@ -22,6 +25,7 @@
                 </label>
             </div>
             <div class="permissions">
+                <a href="/admin" target="_blank" class="button mini-btn">Admin Portal</a>
                 <button id="request-permissions">Request Mic/Speaker Permissions</button>
                 <span id="permission-status"></span>
             </div>
@@ -96,7 +100,7 @@
 
     <script src="/static/app.js"></script>
     <script>
-        initTutor("{{.LessonID}}", "{{.TutorID}}");
+        initTutor("{{.LessonID}}", "{{.SystemCode}}");
     </script>
 </body>
 </html>
