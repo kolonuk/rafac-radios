@@ -4,7 +4,7 @@ A virtual radio training application designed for tutors to conduct simulated ra
 
 ## Features
 
-- **Multi-session Support**: Multiple tutors can run separate lessons simultaneously using unique Lesson IDs.
+- **Multi-session Support**: Multiple tutors can run separate lessons simultaneously using unique Lesson IDs. The system is optimized to handle high concurrency (e.g., 4+ simultaneous lessons with 12+ students each).
 - **Tutor Dashboard**:
     - **Lesson Management**: Choose between Fixed, Restricted Frequency, or Open lesson types.
     - **Real-time Monitoring**: Monitor student statuses and listen to specific frequencies or students using "tap and hold".
@@ -17,6 +17,9 @@ A virtual radio training application designed for tutors to conduct simulated ra
     - **Callsign & Frequency Choice**: Depending on the lesson type, students can change their own frequency or request a callsign change.
     - **Presence**: See others currently on the same frequency.
 - **Realistic Audio**: Integrated Web Audio API filters (bandpass 300Hz-3kHz) and normalization to simulate radio quality.
+- **Robust Audio Backends**:
+    - **Default (WebSockets)**: High-performance, non-blocking relay optimized for concurrency. Uses Int16 PCM encoding to minimize bandwidth and leverages asynchronous I/O to handle multiple concurrent lessons and transmissions smoothly.
+    - **Mumble (Optional)**: Support for professional-grade VoIP using the Mumble protocol (Opus compression, jitter management), ideal for extremely high-traffic or high-latency environments.
 - **Admin Portal**:
     - List all running lessons, tutor names, and student counts.
     - Run system tests directly from the browser.
@@ -29,6 +32,7 @@ A virtual radio training application designed for tutors to conduct simulated ra
 
 ### Running the App
 
+#### Option 1: Standard (Docker)
 1. Build the Docker image:
    ```bash
    docker build -t rafac-radios .
@@ -37,6 +41,13 @@ A virtual radio training application designed for tutors to conduct simulated ra
 2. Run the container:
    ```bash
    docker run -p 8080:8080 -e SYSTEM_CODE=your_secret_code rafac-radios
+   ```
+
+#### Option 2: Enhanced Robustness (Docker Compose + Mumble)
+This option uses a Mumble server for audio relay, which is more robust for high-traffic or high-latency environments.
+1. Run with Docker Compose:
+   ```bash
+   docker-compose up --build
    ```
 
 3. Access the app:

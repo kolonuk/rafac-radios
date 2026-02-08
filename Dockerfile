@@ -11,6 +11,8 @@ RUN go build -o main .
 
 FROM alpine:latest
 
+RUN apk add --no-cache espeak-ng
+
 WORKDIR /app
 
 COPY --from=builder /app/main .
